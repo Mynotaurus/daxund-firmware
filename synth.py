@@ -58,3 +58,45 @@ audio_in = ADC(Pin(28))
 # counterclock: 11 -> 10 -> 00 -> 01 ->
 # if it changes, interrupt with which direction its going
 # most seem to implement this with a jump table from AB<<2 + newAB
+# 0000 -  S -  1000 -  C
+# 0001 -  C -  1001 -  I
+# 0010 - CC -  1010 -  S
+# 0011 -  I -  1011 - CC
+# 0100 - CC -  1100 -  I
+# 0101 -  S -  1101 - CC
+# 0110 -  I -  1110 -  C
+# 0111 -  C -  1111 -  S
+
+#credit to https://github.com/GitJer/Rotary_encoder for the underlying logic
+@rp2.asm_pio(set_init=rp2.PIO.OUT_LOW)
+def rotary_encoder_PIO():
+    jmp("nothing")
+    jmp("clockwise")
+    jmp("counterclockwise")
+    jmp("nothing")
+    jmp("counterclockwise")
+    jmp("nothing")
+    jmp("nothing")
+    jmp("clockwise")
+    jmp("clockwise")
+    jmp("nothing")
+    jmp("nothing")
+    jmp("counterclockwise")
+    jmp("nothing")
+    jmp("counterclockwise")
+    jmp("clockwise")
+    jmp("nothing")
+
+    label("nothing")
+    in(pins,2) #lets get new AB into ISR
+    mov(osr,isr) #put it into osr so we can...
+    out(isr,2) #shift it back into the isr (and clear it)
+    in(pins,2) #add a new state of AB to get our input 
+    mov(exec,isr) #jump to our table
+
+    label("counterclockwise")
+    irq(0)
+    jmp("nothing")
+    label("clockwise")
+    irq(1)
+    jmp("nothing")
