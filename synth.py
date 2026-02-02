@@ -5,6 +5,7 @@ import neopixel
 import time
 import math
 import random
+import rp2
 
 # -- PINOUT --
 
@@ -33,8 +34,8 @@ cols = [Pin(15, Pin.OUT),Pin(16, Pin.OUT),
 
 # ENCODER - A:8 B:9 SW:14
 encoder = {
-    "A":Pin(8),
-    "B":Pin(9),
+    "A":Pin(8, Pin.IN, pull=Pin.PULL_UP),
+    "B":Pin(9, Pin.IN, pull=Pin.PULL_UP),
     "SW":Pin(14, Pin.IN, pull=Pin.PULL_DOWN)
 }
 
@@ -45,3 +46,15 @@ np = neopixel.NeoPixel(Pin(27), 16)
 audio_in = ADC(Pin(28))
 
 
+#pio for:
+# oscillator
+# set up a simple pio square wave and poke frequency with https://forums.raspberrypi.com/viewtopic.php?t=331490
+
+# matrix driver
+# loop through columns
+
+# encoder driver
+# AB clockwise: 11 -> 01 -> 00 -> 10 -> 
+# counterclock: 11 -> 10 -> 00 -> 01 ->
+# if it changes, interrupt with which direction its going
+# most seem to implement this with a jump table from AB<<2 + newAB
