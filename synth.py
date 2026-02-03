@@ -1,11 +1,12 @@
 from sh1122 import SH1122_SPI
 import framebuf
-from machine import Pin, SPI, ADC
+from machine import Pin, SPI, ADC, freq, Timer
 import neopixel
 import time
 import math
 import mem32
 import rp2
+import _thread
 
 # -- PINOUT --
 
@@ -18,6 +19,7 @@ res.value(1)
 cs = Pin(5, Pin.OUT)
 cs.value(1)
 oled = SH1122_SPI(256, 64, spi, dc, res, cs)
+oled.fill(0)
 
 # SIGNALS - OSC:10 GATE:11 ACC_P:12 ACC_V:13
 osc_pin = Pin(10, Pin.OUT)
@@ -44,7 +46,6 @@ np = neopixel.NeoPixel(Pin(27), 16)
 
 # AUDIO IN - GPIO 28
 audio_in = ADC(Pin(28))
-
 
 #pio for:
 # encoder driver
@@ -95,7 +96,6 @@ def rotary_encoder_PIO():
     label("clockwise")
     irq(1)
     jmp("nothing")
-
 rot_sm = rp2.StateMachine(0, rotary_encoder_PIO, freq=2000, in_base=(encoder["A"]))
 
 # oscillator
@@ -107,13 +107,11 @@ def oscillator_PIO():
     nop() [30]
     set(pins,0)
     nop() [30]
-
-oscillator_sm = rp2.StateMachine(2, oscillator_PIO, freq=16000, set_base=(osc_pin))
-OSC_CLKDIV = 0x50200000 + 0x0f8
-
-def set_oscillator(freq):
-    clockfreq = 0
-    mem32[OSC_CLKDIV] = 0 #find values later
+oscillator_sm = rp2.StateMachine(1, oscillator_PIO, freq=16000, set_base=(osc_pin))
+OSC_CLKDIV = 0x50200000 + 0x0e0
+def set_oscillator(frequency):
+    divider = freq() / (64 * frequency)
+    mem32[OSC_CLKDIV] = math.floor(divider) * 2**16 + math.floor((divider - math.floor(divider))*256) * 2**8
 
 # matrix driver
 # loop through columns
@@ -139,3 +137,29 @@ def matrix_PIO():
     push(noblock).side(0) #push isr to RX and clear col 8
     irq(2) #okay we're done
 matrix_sm = rp2.StateMachine(5, matrix_PIO, freq=20000, in_base=(matrix_row[0]), set_base=(matrix_col[0]), sideset_base=(matrix_col[4]))
+
+sequence = {
+    "length":16,
+    "note":[],
+
+}
+#core0 tasks: updating the sequencer signals and babysitting the oscillator, which we will do largely from timers
+sequencer_time=0
+def sequencer_update():
+    #we want to run this multiple times per beat
+    if(sequencer_time%32 == 0):
+        #beat-based operations
+    #gradual changes like slides
+    sequencer_time+=1
+
+sequence_tick = Timer(0,freq=5000, mode=Timer.PERIODIC, callback=sequencer_update,hard=True)
+
+#core1 tasks: handling the screen and inputs
+def core1():
+    t=0
+    while True:
+        for i in range(0,16):
+            oled.fill_rect(i*8, 28+math.sin(t/100)*25, 8, 8,15-i)
+            oled.fill_rect(247-(i*8), 28+math.sin(t/100)*25, 8, 8,15-i)
+        t+=1
+_thread.start_new_thread(core1)
