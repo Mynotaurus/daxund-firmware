@@ -1,10 +1,9 @@
 from sh1122 import SH1122_SPI
 import framebuf
-from machine import Pin, SPI, ADC, freq, Timer
+from machine import Pin, SPI, ADC, freq, Timer, mem32
 import neopixel
 import time
 import math
-import mem32
 import rp2
 import _thread
 
@@ -83,21 +82,19 @@ def rotary_encoder_PIO():
     jmp("counterclockwise")
     jmp("clockwise")
     jmp("nothing")
-
-    in(pins,2) #lets load a first new AB into ISR - program starts here
     label("nothing")
     mov(osr,isr) #put isr into osr so we can...
     out(isr,2) #shift it back into the isr (and clear it)
-    in(pins,2) #add a new state of AB to get our input 
+    in_(pins,2) #add a new state of AB to get our input 
     mov(exec,isr) #jump to our table
-
     label("counterclockwise")
     irq(0)
     jmp("nothing")
     label("clockwise")
     irq(1)
     jmp("nothing")
-rot_sm = rp2.StateMachine(0, rotary_encoder_PIO, freq=2000, in_base=(encoder["A"]))
+rot_sm = rp2.StateMachine(0, rotary_encoder_PIO, freq=20000, in_base=encoder["A"])
+rot_sm.exec("in_(pins,2)")
 
 # oscillator
 # set up a simple pio square wave and poke frequency with https://forums.raspberrypi.com/viewtopic.php?t=331490
@@ -108,8 +105,8 @@ def oscillator_PIO():
     nop() [30]
     set(pins,0)
     nop() [30]
-oscillator_sm = rp2.StateMachine(1, oscillator_PIO, freq=16000, set_base=(osc_pin))
-OSC_CLKDIV = 0x50200000 + 0x0e0
+oscillator_sm = rp2.StateMachine(5, oscillator_PIO, freq=16000, set_base=(osc_pin))
+OSC_CLKDIV = 0x50300000 + 0x0e0
 def set_oscillator(frequency):
     if(frequency!=0):
         divider = freq() / (64 * frequency)
@@ -121,54 +118,44 @@ def set_oscillator(frequency):
 @rp2.asm_pio(set_init=(rp2.PIO.OUT_LOW,rp2.PIO.OUT_LOW,rp2.PIO.OUT_LOW,rp2.PIO.OUT_LOW),sideset_init=(rp2.PIO.OUT_LOW,rp2.PIO.OUT_LOW,rp2.PIO.OUT_LOW,rp2.PIO.OUT_LOW))
 def matrix_PIO():
     set(pins,1) #col 1
-    in(pins,3)
+    in_(pins,3)
     set(pins,2) #col 2
-    in(pins,3)
+    in_(pins,3)
     set(pins,4) #col 3
-    in(pins,3)
+    in_(pins,3)
     set(pins,8) #col 4
-    in(pins,3)
+    in_(pins,3)
     set(pins,0).side(1) # clear col 4, set col 5
-    in(pins,3)
+    in_(pins,3)
     nop().side(2) #col 6
-    in(pins,3)
+    in_(pins,3)
     nop().side(4) #col 7
-    in(pins,3)
+    in_(pins,3)
     nop().side(8) #col 8
-    in(pins,3)
+    in_(pins,3)
     push(noblock).side(0) #push isr to RX and clear col 8
     irq(0) #okay we're done
-matrix_sm = rp2.StateMachine(5, matrix_PIO, freq=20000, in_base=(matrix_row[0]), set_base=(matrix_col[0]), sideset_base=(matrix_col[4]))
+matrix_sm = rp2.StateMachine(4, matrix_PIO, freq=20000, in_base=(matrix_row[0]), set_base=(matrix_col[0]), sideset_base=(matrix_col[4]))
 
-input_buffer = []
+rotation_buffer = 0
+rot_button_buffer = False
+
 def pio0_input_handler(sm):
     #we recieve an interrupt from PIO0 but we have to figure out which it is
+    print("IRQ!")
     irq_id = rp2.PIO(0).irq().flags() #256 for irq0, 512 for irq1, 1024 for irq2, 2048 for irq3
     if(irq_id==256):
-        input_buffer.push("CW")
+        rotation_buffer += 1
     if(irq_id==512):
-        input_buffer.push("CCW")
+        rotation_buffer -= 1
 
-current_button_input = 0
-def pio1_input_handler(sm):
-    #we recieve an interrupt from PIO1 but we have to figure out which it is
-    irq_id = rp2.PIO(1).irq().flags() #256 for irq0, 512 for irq1, 1024 for irq2, 2048 for irq3
-    if(irq_id==256):
-        matrix_value = sm.get()
-        if(matrix_value!=current_button_input): #only report changes
-            input_buffer.push(matrix_value)
-            current_button_input = matrix_value
-
-def rot_button_handler():
-    if(encoder["SW"].value()):
-        input_buffer.push("E_P")
-    else:
-        input_buffer.push("E_R")
+def rot_button_handler(b):
+    rot_button_buffer = True
 
 sequence = {
     "length":16,
-    "note":[],
-    "accent":[],
+    "note":[0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
+    "accent":[0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
     "gate_length":0.5
 }
 
@@ -205,21 +192,67 @@ def sequencer_update():
 
 #core1 tasks: display and input handling
 def core1():
+    t = 0
+    last_rot = encoder["A"].value()*2 + encoder["B"].value()
+    last_buttons = 0
+    encoder_rot = 0
     while True:
         #outline: fetch inputs, update state, refresh display
+        for i in range(16):
+            np[i] = (math.floor(32+24*math.sin((t+i*20)/100)), 0, math.floor(32+24*math.cos((t+i*20)/100)))
+            np.write()
         
-
-        for i in range(0,16):
-            oled.fill_rect(i*8, 28+math.sin(t/100)*25, 8, 8,15-i)
-            oled.fill_rect(247-(i*8), 28+math.sin(t/100)*25, 8, 8,15-i)
+        new_rot = encoder["A"].value()*2 + encoder["B"].value()
+        if([2,0,3,1][last_rot] == new_rot):
+            encoder_rot = 1
+        elif([1,3,0,2][last_rot] == new_rot):
+            encoder_rot = -1
+        else:
+            encoder_rot = 0
+        last_rot = new_rot
+        # AB clockwise: 11 -> 01 -> 00 -> 10 -> 
+        # counterclock: 11 -> 10 -> 00 -> 01 ->
+        
+        oled.fill(0)
+        if(matrix_sm.rx_fifo()):
+            last_buttons = matrix_sm.get()
+            oled.text(bin(last_buttons), 0, 0, 12)
+        
+        oled.text(str(encoder_rot), 0, 56, 12)
+        
+        for i in range(24):
+            if(last_buttons & (1 << i)):
+                oled.fill_rect((24-i)*3, 28+(i%3)*9, 8, 8,6)
+            else:
+                oled.fill_rect((24-i)*3, 28+(i%3)*9, 8, 8,2)
+        if(encoder["SW"].value()):   
+            oled.fill_rect(90, 28, 8, 8, 6)
+        else:
+            oled.fill_rect(90, 28, 8, 8, 2)
+            
+        if(encoder_rot==1):   
+            oled.fill_rect(83, 28, 6, 4, 6)
+        else:
+            oled.fill_rect(83, 28, 6, 4, 2)
+        
+        if(encoder_rot==-1):   
+            oled.fill_rect(99, 28, 6, 4, 6)
+        else:
+            oled.fill_rect(99, 28, 6, 4, 2)
+            
+            
+        oled.show()
         t+=1
 
-_thread.start_new_thread(core1)
+_thread.start_new_thread(core1, ())
 
 #core0 tasks: recieving interrupts
-rot_sm.irq(pio0_input_handler)
-matrix_sm.irq(pio1_input_handler)
+#rot_sm.irq(pio0_input_handler)
 encoder["SW"].irq(rot_button_handler, trigger=Pin.IRQ_RISING|Pin.IRQ_FALLING)
-sequence_tick = Timer(0,freq=5000, mode=Timer.PERIODIC, callback=sequencer_update,hard=True)
+#sequence_tick = Timer(-1,freq=50, mode=Timer.PERIODIC, callback=sequencer_update,hard=True)
+
+#rot_sm.active(1)
+matrix_sm.active(1)
+oscillator_sm.active(1)
 while True:
     pass
