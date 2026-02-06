@@ -24,6 +24,7 @@ oled.fill(0)
 # SIGNALS - OSC:10 GATE:11 ACC_P:12 ACC_V:13
 osc_pin = Pin(10, Pin.OUT)
 gate_pin = Pin(11, Pin.OUT)
+gate_pin.high()
 acc_pitch_pin = Pin(12, Pin.OUT)
 acc_volume_pin = Pin(13, Pin.OUT)
 
@@ -110,8 +111,9 @@ def oscillator_PIO():
 oscillator_sm = rp2.StateMachine(1, oscillator_PIO, freq=16000, set_base=(osc_pin))
 OSC_CLKDIV = 0x50200000 + 0x0e0
 def set_oscillator(frequency):
-    divider = freq() / (64 * frequency)
-    mem32[OSC_CLKDIV] = math.floor(divider) * 2**16 + math.floor((divider - math.floor(divider))*256) * 2**8
+    if(frequency!=0):
+        divider = freq() / (64 * frequency)
+        mem32[OSC_CLKDIV] = math.floor(divider) * 2**16 + math.floor((divider - math.floor(divider))*256) * 2**8
 
 # matrix driver
 # loop through columns
@@ -135,31 +137,89 @@ def matrix_PIO():
     nop().side(8) #col 8
     in(pins,3)
     push(noblock).side(0) #push isr to RX and clear col 8
-    irq(2) #okay we're done
+    irq(0) #okay we're done
 matrix_sm = rp2.StateMachine(5, matrix_PIO, freq=20000, in_base=(matrix_row[0]), set_base=(matrix_col[0]), sideset_base=(matrix_col[4]))
+
+input_buffer = []
+def pio0_input_handler(sm):
+    #we recieve an interrupt from PIO0 but we have to figure out which it is
+    irq_id = rp2.PIO(0).irq().flags() #256 for irq0, 512 for irq1, 1024 for irq2, 2048 for irq3
+    if(irq_id==256):
+        input_buffer.push("CW")
+    if(irq_id==512):
+        input_buffer.push("CCW")
+
+current_button_input = 0
+def pio1_input_handler(sm):
+    #we recieve an interrupt from PIO1 but we have to figure out which it is
+    irq_id = rp2.PIO(1).irq().flags() #256 for irq0, 512 for irq1, 1024 for irq2, 2048 for irq3
+    if(irq_id==256):
+        matrix_value = sm.get()
+        if(matrix_value!=current_button_input): #only report changes
+            input_buffer.push(matrix_value)
+            current_button_input = matrix_value
+
+def rot_button_handler():
+    if(encoder["SW"].value()):
+        input_buffer.push("E_P")
+    else:
+        input_buffer.push("E_R")
 
 sequence = {
     "length":16,
     "note":[],
-
+    "accent":[],
+    "gate_length":0.5
 }
-#core0 tasks: updating the sequencer signals and babysitting the oscillator, which we will do largely from timers
+
+#function to be run every sequencer tick
 sequencer_time=0
+gate_time_left = 0
 def sequencer_update():
+    seq_substeps = 32
     #we want to run this multiple times per beat
-    if(sequencer_time%32 == 0):
-        #beat-based operations
+    if(sequencer_time%seq_substeps == 0):
+        current_beat = math.floor(sequencer_time/seq_substeps)%sequence["length"]
+        if(sequence["note"][current_beat]): #if theres a note rn
+            set_oscillator(sequence["note"][current_beat])
+            gate_time_left = math.floor(sequence["gate_length"] * seq_substeps)
+            gate_pin.low()
+            if(sequence["accent"][current_beat]):
+                acc_volume_pin.high()
+                acc_pitch_pin.high()
+            else:
+                acc_volume_pin.low()
+                acc_pitch_pin.low()
+        else:
+            acc_volume_pin.low() #clear accents if theres no note next
+            acc_pitch_pin.low()
+
+    if(gate_time_left<=0):
+        gate_pin.high()
+    else:
+        gate_time_left -= 1
+        
+
     #gradual changes like slides
     sequencer_time+=1
 
-sequence_tick = Timer(0,freq=5000, mode=Timer.PERIODIC, callback=sequencer_update,hard=True)
-
-#core1 tasks: handling the screen and inputs
+#core1 tasks: display and input handling
 def core1():
-    t=0
     while True:
+        #outline: fetch inputs, update state, refresh display
+        
+
         for i in range(0,16):
             oled.fill_rect(i*8, 28+math.sin(t/100)*25, 8, 8,15-i)
             oled.fill_rect(247-(i*8), 28+math.sin(t/100)*25, 8, 8,15-i)
         t+=1
+
 _thread.start_new_thread(core1)
+
+#core0 tasks: recieving interrupts
+rot_sm.irq(pio0_input_handler)
+matrix_sm.irq(pio1_input_handler)
+encoder["SW"].irq(rot_button_handler, trigger=Pin.IRQ_RISING|Pin.IRQ_FALLING)
+sequence_tick = Timer(0,freq=5000, mode=Timer.PERIODIC, callback=sequencer_update,hard=True)
+while True:
+    pass
