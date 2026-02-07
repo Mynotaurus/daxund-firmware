@@ -6,6 +6,7 @@ import time
 import math
 import rp2
 import _thread
+from rotary_irq_rp2 import RotaryIRQ
 
 # -- PINOUT --
 
@@ -35,66 +36,21 @@ matrix_col = [Pin(15, Pin.OUT),Pin(16, Pin.OUT),
         Pin(21, Pin.OUT),Pin(22, Pin.OUT)]
 
 # ENCODER - A:8 B:9 SW:14
-encoder = {
-    "A":Pin(8, Pin.IN, pull=Pin.PULL_UP),
-    "B":Pin(9, Pin.IN, pull=Pin.PULL_UP),
-    "SW":Pin(14, Pin.IN, pull=Pin.PULL_DOWN)
-}
+encoder_switch = Pin(14, Pin.IN, pull=Pin.PULL_DOWN)
+
+rotary_encoder = RotaryIRQ(pin_num_clk=8, 
+              pin_num_dt=9, 
+              min_val=0, 
+              max_val=19, #20 pulses per rotation
+              reverse=False, 
+              range_mode=RotaryIRQ.RANGE_WRAP,
+              pull_up=True)
 
 # RGB - GPIO 27
 np = neopixel.NeoPixel(Pin(27), 16)
 
 # AUDIO IN - GPIO 28
 audio_in = ADC(Pin(28))
-
-#pio for:
-# encoder driver
-# AB clockwise: 11 -> 01 -> 00 -> 10 -> 
-# counterclock: 11 -> 10 -> 00 -> 01 ->
-# if it changes, interrupt with which direction its going
-# most seem to implement this with a jump table from AB<<2 + newAB
-# 0000 -  S -  1000 -  C
-# 0001 -  C -  1001 -  I
-# 0010 - CC -  1010 -  S
-# 0011 -  I -  1011 - CC
-# 0100 - CC -  1100 -  I
-# 0101 -  S -  1101 - CC
-# 0110 -  I -  1110 -  C
-# 0111 -  C -  1111 -  S
-
-#credit to https://github.com/GitJer/Rotary_encoder for the underlying logic
-# origin 0 and pc start value 16 required
-@rp2.asm_pio()
-def rotary_encoder_PIO():
-    jmp("nothing")
-    jmp("clockwise")
-    jmp("counterclockwise")
-    jmp("nothing")
-    jmp("counterclockwise")
-    jmp("nothing")
-    jmp("nothing")
-    jmp("clockwise")
-    jmp("clockwise")
-    jmp("nothing")
-    jmp("nothing")
-    jmp("counterclockwise")
-    jmp("nothing")
-    jmp("counterclockwise")
-    jmp("clockwise")
-    jmp("nothing")
-    label("nothing")
-    mov(osr,isr) #put isr into osr so we can...
-    out(isr,2) #shift it back into the isr (and clear it)
-    in_(pins,2) #add a new state of AB to get our input 
-    mov(exec,isr) #jump to our table
-    label("counterclockwise")
-    irq(0)
-    jmp("nothing")
-    label("clockwise")
-    irq(1)
-    jmp("nothing")
-rot_sm = rp2.StateMachine(0, rotary_encoder_PIO, freq=20000, in_base=encoder["A"])
-rot_sm.exec("in_(pins,2)")
 
 # oscillator
 # set up a simple pio square wave and poke frequency with https://forums.raspberrypi.com/viewtopic.php?t=331490
@@ -137,38 +93,58 @@ def matrix_PIO():
     irq(0) #okay we're done
 matrix_sm = rp2.StateMachine(4, matrix_PIO, freq=20000, in_base=(matrix_row[0]), set_base=(matrix_col[0]), sideset_base=(matrix_col[4]))
 
-rotation_buffer = 0
-rot_button_buffer = False
+def get_bit(word,i):
+    if (word & (1<<i)):
+        return 1
+    else:
+        return 0
 
-def pio0_input_handler(sm):
-    #we recieve an interrupt from PIO0 but we have to figure out which it is
-    print("IRQ!")
-    irq_id = rp2.PIO(0).irq().flags() #256 for irq0, 512 for irq1, 1024 for irq2, 2048 for irq3
-    if(irq_id==256):
-        rotation_buffer += 1
-    if(irq_id==512):
-        rotation_buffer -= 1
+def get_button_row(b,r):
+    #we want bits 0, 3, 6, 9, 12, etc etc
+    temp = 0
+    for i in range(8):
+        temp = temp + (get_bit(b, i*3+r) << i)
+    return temp
 
-def rot_button_handler(b):
-    rot_button_buffer = True
+#notes are logarithmically spaced across octaves - 2^(1/12) apart
+frequency_letters = ["A ","A#","B ","C ","C#","D ","D#","E ","F ","F#","G ","G#"]
+#lets pre-calculate those frequencies actually
+frequency_mult = [1.00000,1.05946,1.12246,1.18921,1.25992,1.33484,1.41421,1.49830,1.58740,1.68179,1.78180,1.88775]
+
+def letter_to_frequency(id):
+    #we'll use the number of the piano key from https://en.wikipedia.org/wiki/Piano_key_frequencies?useskin=vector
+    #A0 is 27.5Hz
+    return 27.5 * (2 ** math.floor((id-1)/12)) * frequency_mult[(id-1)%12]
+
+def update_sequencer_frequencies(): #copy our note id list into the frequency list
+    for i in range(len(sequence["note"])):
+        if(sequence["note"][i]==0):
+            sequence["frequency"][i] = 0
+        else:
+            sequence["frequency"][i] = letter_to_frequency(sequence["note"][i])
 
 sequence = {
     "length":16,
     "note":[0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
+    "frequency":[0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
     "accent":[0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
+    "hold":[0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
     "gate_length":0.5
 }
+
 
 #function to be run every sequencer tick
 sequencer_time=0
 gate_time_left = 0
-def sequencer_update():
+
+def sequencer_update(tx):
+    global sequencer_time, gate_time_left, sequence, gate_pin, acc_volume_pin, acc_pitch_pin
     seq_substeps = 32
     #we want to run this multiple times per beat
-    if(sequencer_time%seq_substeps == 0):
+    if(sequencer_time % seq_substeps == 0):
         current_beat = math.floor(sequencer_time/seq_substeps)%sequence["length"]
-        if(sequence["note"][current_beat]): #if theres a note rn
-            set_oscillator(sequence["note"][current_beat])
+        if(sequence["frequency"][current_beat]): #if theres a note rn
+            set_oscillator(sequence["frequency"][current_beat])
             gate_time_left = math.floor(sequence["gate_length"] * seq_substeps)
             gate_pin.low()
             if(sequence["accent"][current_beat]):
@@ -188,70 +164,112 @@ def sequencer_update():
         
 
     #gradual changes like slides
-    sequencer_time+=1
+    sequencer_time += 1
 
 #core1 tasks: display and input handling
 def core1():
     t = 0
-    last_rot = encoder["A"].value()*2 + encoder["B"].value()
+    last_rot = rotary_encoder.value()
+    current_rot = last_rot
+    new_rot = 0
     last_buttons = 0
-    encoder_rot = 0
+    current_buttons = 0
+    new_buttons = 0
+    last_encsw = False
+    current_encsw = False
+    new_encsw = False
+    
+    last_used_note = 40
     while True:
         #outline: fetch inputs, update state, refresh display
-        for i in range(16):
-            np[i] = (math.floor(32+24*math.sin((t+i*20)/100)), 0, math.floor(32+24*math.cos((t+i*20)/100)))
-            np.write()
-        
-        new_rot = encoder["A"].value()*2 + encoder["B"].value()
-        if([2,0,3,1][last_rot] == new_rot):
-            encoder_rot = 1
-        elif([1,3,0,2][last_rot] == new_rot):
-            encoder_rot = -1
+
+        #first we get our current inputs
+        current_rot = rotary_encoder.value()
+        if(matrix_sm.rx_fifo()):
+            current_buttons = matrix_sm.get()
         else:
-            encoder_rot = 0
-        last_rot = new_rot
-        # AB clockwise: 11 -> 01 -> 00 -> 10 -> 
-        # counterclock: 11 -> 10 -> 00 -> 01 ->
+            current_buttons = last_buttons
+        current_encsw = encoder_switch.value()
+
+        #find any new rising edges
+        new_rot = (current_rot-last_rot+10)%20-10
+        new_buttons = current_buttons & ~last_buttons
+        new_encsw = current_encsw and not last_encsw
+
+        #check for new inputs
+        if(new_buttons):
+            note_buttons = get_button_row(new_buttons,1)*256+get_button_row(new_buttons,2)
+            for i in range(16):
+                if(note_buttons & 1<<i):
+                    if sequence["note"][15-i] == 0:
+                        sequence["note"][15-i] = last_used_note
+                    else:
+                        sequence["note"][15-i] = 0
+                    update_sequencer_frequencies()
+        
+        if(new_rot and current_buttons):
+            note_buttons = get_button_row(current_buttons,1)*256+get_button_row(current_buttons,2)
+            for i in range(16):
+                if(note_buttons & 1<<i):
+                    if sequence["note"][15-i] != 0:
+                        sequence["note"][15-i] += new_rot
+                        last_used_note = sequence["note"][15-i]
+                    update_sequencer_frequencies()
+        elif(new_rot):
+            last_used_note += new_rot
+            last_used_note = max(last_used_note,1)
         
         oled.fill(0)
-        if(matrix_sm.rx_fifo()):
-            last_buttons = matrix_sm.get()
-            oled.text(bin(last_buttons), 0, 0, 12)
-        
-        oled.text(str(encoder_rot), 0, 56, 12)
-        
+        tempnotestr = ""
+        for i in range(len(sequence["note"])):
+            if sequence["note"][i]==0:
+                tempnotestr += "- "
+            else:
+                tempnotestr += frequency_letters[sequence["note"][i]%12]
+        oled.text(tempnotestr, 0, 0, 12)
+        oled.text(frequency_letters[last_used_note%12]+"-"+str(math.floor(last_used_note/12))+" "+str(last_used_note), 0, 12, 12)
         for i in range(24):
             if(last_buttons & (1 << i)):
                 oled.fill_rect((24-i)*3, 28+(i%3)*9, 8, 8,6)
             else:
                 oled.fill_rect((24-i)*3, 28+(i%3)*9, 8, 8,2)
-        if(encoder["SW"].value()):   
+        if(encoder_switch.value()):   
             oled.fill_rect(90, 28, 8, 8, 6)
         else:
             oled.fill_rect(90, 28, 8, 8, 2)
             
-        if(encoder_rot==1):   
+        if(new_rot<0):   
             oled.fill_rect(83, 28, 6, 4, 6)
         else:
             oled.fill_rect(83, 28, 6, 4, 2)
         
-        if(encoder_rot==-1):   
+        if(new_rot>0):   
             oled.fill_rect(99, 28, 6, 4, 6)
         else:
             oled.fill_rect(99, 28, 6, 4, 2)
-            
+        
+        for i in range(16):
+            if(sequence["note"][15-i]):
+                np[i] = (math.floor(32+24*math.sin((sequence["note"][15-i]%12)/2)), 0, math.floor(32+24*math.cos((sequence["note"][15-i]%12)/2)))                
+            else:
+                np[i] = (0,0,0)
+                
+            if(15-i == math.floor(sequencer_time / 32)%16):
+                np[i] = (np[i][0] + 4,np[i][1] + 4,np[i][2] + 4)
+            np.write()
             
         oled.show()
+
+        last_rot = current_rot
+        last_buttons = current_buttons
+        last_encsw = current_encsw
         t+=1
 
 _thread.start_new_thread(core1, ())
 
 #core0 tasks: recieving interrupts
-#rot_sm.irq(pio0_input_handler)
-encoder["SW"].irq(rot_button_handler, trigger=Pin.IRQ_RISING|Pin.IRQ_FALLING)
-#sequence_tick = Timer(-1,freq=50, mode=Timer.PERIODIC, callback=sequencer_update,hard=True)
+sequence_tick = Timer(freq=200, mode=Timer.PERIODIC, callback=sequencer_update)
 
-#rot_sm.active(1)
 matrix_sm.active(1)
 oscillator_sm.active(1)
 while True:
