@@ -7,6 +7,7 @@ import math
 import rp2
 import _thread
 from rotary_irq_rp2 import RotaryIRQ
+from synth_graphics import sprites
 
 # -- PINOUT --
 
@@ -179,7 +180,7 @@ def core1():
     current_encsw = False
     new_encsw = False
     
-    last_used_note = 40
+    last_used_note = 39
     while True:
         #outline: fetch inputs, update state, refresh display
 
@@ -220,33 +221,39 @@ def core1():
             last_used_note = max(last_used_note,1)
         
         oled.fill(0)
-        tempnotestr = ""
+        oled.vline(math.floor(((sequencer_time / 32)%sequence["length"]) * 256 / sequence["length"]),2,32,1)
         for i in range(len(sequence["note"])):
             if sequence["note"][i]==0:
-                tempnotestr += "- "
+                oled.line(i*16,17,i*16+9,17,1)
             else:
-                tempnotestr += frequency_letters[sequence["note"][i]%12]
-        oled.text(tempnotestr, 0, 0, 12)
-        oled.text(frequency_letters[last_used_note%12]+"-"+str(math.floor(last_used_note/12))+" "+str(last_used_note), 0, 12, 12)
-        for i in range(24):
-            if(last_buttons & (1 << i)):
-                oled.fill_rect((24-i)*3, 28+(i%3)*9, 8, 8,6)
-            else:
-                oled.fill_rect((24-i)*3, 28+(i%3)*9, 8, 8,2)
-        if(encoder_switch.value()):   
-            oled.fill_rect(90, 28, 8, 8, 6)
-        else:
-            oled.fill_rect(90, 28, 8, 8, 2)
+                subletter = ["font_a","font_a","font_b","font_c","font_c","font_d","font_d","font_e","font_f","font_f","font_g","font_g"]            
+                templet = framebuf.FrameBuffer(sprites[subletter[sequence["note"][i]%12]],16,15,framebuf.MONO_HLSB)
+                oled.blit(templet,i*16,20-math.floor(sequence["note"][i]/4),0)
+                if sequence["note"][i]%12 in [1,4,6,9,11]:
+                    templet = framebuf.FrameBuffer(bytearray(b"\x50\xF8\x50\xF8\x50"),8,5,framebuf.MONO_HLSB)
+                    oled.blit(templet,i*16+10,20-math.floor(sequence["note"][i]/4),0)
             
-        if(new_rot<0):   
-            oled.fill_rect(83, 28, 6, 4, 6)
-        else:
-            oled.fill_rect(83, 28, 6, 4, 2)
+        oled.text(frequency_letters[last_used_note%12]+"-"+str(math.floor(last_used_note/12))+" "+str(last_used_note), 0, 56, 12)
         
-        if(new_rot>0):   
-            oled.fill_rect(99, 28, 6, 4, 6)
-        else:
-            oled.fill_rect(99, 28, 6, 4, 2)
+        #for i in range(24):
+        #    if(last_buttons & (1 << i)):
+        #        oled.fill_rect((24-i)*3, 28+(i%3)*9, 8, 8,6)
+        #    else:
+        #        oled.fill_rect((24-i)*3, 28+(i%3)*9, 8, 8,2)
+        #if(encoder_switch.value()):   
+        #    oled.fill_rect(90, 28, 8, 8, 6)
+        #else:
+        #    oled.fill_rect(90, 28, 8, 8, 2)
+            
+        #if(new_rot<0):   
+        #    oled.fill_rect(83, 28, 6, 4, 6)
+        #else:
+        #    oled.fill_rect(83, 28, 6, 4, 2)
+        
+        #if(new_rot>0):   
+        #    oled.fill_rect(99, 28, 6, 4, 6)
+        #else:
+        #    oled.fill_rect(99, 28, 6, 4, 2)
         
         for i in range(16):
             if(sequence["note"][15-i]):
@@ -269,7 +276,6 @@ _thread.start_new_thread(core1, ())
 
 #core0 tasks: recieving interrupts
 sequence_tick = Timer(freq=200, mode=Timer.PERIODIC, callback=sequencer_update)
-
 matrix_sm.active(1)
 oscillator_sm.active(1)
 while True:
