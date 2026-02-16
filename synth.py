@@ -67,7 +67,7 @@ OSC_CLKDIV = 0x50300000 + 0x0e0
 def set_oscillator(frequency):
     if(frequency!=0):
         divider = freq() / (64 * frequency)
-        mem32[OSC_CLKDIV] = math.floor(divider) * 2**16 + math.floor((divider - math.floor(divider))*256) * 2**8
+        mem32[OSC_CLKDIV] = math.floor(divider) * 65536 + math.floor((divider - math.floor(divider))*256) * 256
 
 # matrix driver
 # loop through columns
@@ -113,9 +113,9 @@ frequency_letters = ["A ","A#","B ","C ","C#","D ","D#","E ","F ","F#","G ","G#"
 frequency_mult = [1.00000,1.05946,1.12246,1.18921,1.25992,1.33484,1.41421,1.49830,1.58740,1.68179,1.78180,1.88775]
 
 def letter_to_frequency(id):
-    #we'll use the number of the piano key from https://en.wikipedia.org/wiki/Piano_key_frequencies?useskin=vector
-    #A0 is 27.5Hz
-    return 27.5 * (2 ** math.floor((id-1)/12)) * frequency_mult[(id-1)%12]
+    #we'll use the number of the piano key from https://en.wikipedia.org/wiki/Piano_key_frequencies?useskin=vector shifted up by 2 octaves
+    #A0 is 27.5Hz so our 0 is 27.5/4 = 6.875
+    return 6.875 * (2 ** math.floor((id-1)/12)) * frequency_mult[(id-1)%12]
 
 def update_sequencer_frequencies(): #copy our note id list into the frequency list
     for i in range(len(sequence["note"])):
@@ -124,58 +124,96 @@ def update_sequencer_frequencies(): #copy our note id list into the frequency li
         else:
             sequence["frequency"][i] = letter_to_frequency(sequence["note"][i])
 
+# 2 ^ n/16
+log_16_step = [1.00000,1.04427,1.09051,1.13879,1.18921,1.24186,1.29684,1.35426,1.41421,1.47683,1.54221,1.61049,1.68179,1.75625,1.83401,1.91521]
+
 sequence = {
+    "tempo":120,
     "length":16,
     "note":[0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
     "frequency":[0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
     "accent":[0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
     "hold":[0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
-    "gate_length":0.5
+    "gate_length":0.5,
+    "pause":False
 }
-
-
 #function to be run every sequencer tick
-sequencer_time=0
-gate_time_left = 0
-
+seq_int = { #store all internal variables in a dict to namespace it, and also make it easy to make global
+    "t":0,
+    "gate_time_left":0,
+    "note_hold":False,
+    "current_note":0,
+    "next_note":0
+}
 def sequencer_update(tx):
-    global sequencer_time, gate_time_left, sequence, gate_pin, acc_volume_pin, acc_pitch_pin
+    global seq_int, sequence, gate_pin, acc_volume_pin, acc_pitch_pin, adc_buf
     seq_substeps = 32
     #we want to run this multiple times per beat
-    if(sequencer_time % seq_substeps == 0):
-        current_beat = math.floor(sequencer_time/seq_substeps)%sequence["length"]
+    if(seq_int["t"] % seq_substeps == 0):
+        if(sequence["pause"]):
+            gate_pin.high()
+            acc_volume_pin.low()
+            acc_pitch_pin.low()
+            return
+        current_beat = math.floor(seq_int["t"]/seq_substeps)%sequence["length"]
         if(sequence["frequency"][current_beat]): #if theres a note rn
-            set_oscillator(sequence["frequency"][current_beat])
-            gate_time_left = math.floor(sequence["gate_length"] * seq_substeps)
-            gate_pin.low()
             if(sequence["accent"][current_beat]):
                 acc_volume_pin.high()
-                acc_pitch_pin.high()
+                acc_pitch_pin.low()
             else:
                 acc_volume_pin.low()
-                acc_pitch_pin.low()
+                acc_pitch_pin.high()
+            
+            set_oscillator(sequence["frequency"][current_beat])
+            seq_int["gate_time_left"] = math.floor(sequence["gate_length"] * seq_substeps)
+            gate_pin.low()
+            
+            if(sequence["hold"][current_beat] and sequence["frequency"][(current_beat+1)%sequence["length"]]):
+                seq_int["note_hold"] = True
+                seq_int["current_note"] = sequence["frequency"][current_beat]
+                seq_int["next_note"] = sequence["frequency"][(current_beat+1)%sequence["length"]]
+                seq_int["note_gap"] = (seq_int["next_note"]-seq_int["current_note"])
+            else:
+                seq_int["note_hold"] = False
         else:
-            acc_volume_pin.low() #clear accents if theres no note next
-            acc_pitch_pin.low()
+            acc_volume_pin.low() #clear volume if theres no note next
 
-    if(gate_time_left<=0):
-        gate_pin.high()
-    else:
-        gate_time_left -= 1
+    if(seq_int["note_hold"]): #update oscillator pitch
+        #to save calculation, we will use lookup tables for most of the logarithmic curves
+        if(seq_int["t"] % seq_substeps % 2 == 0):
+            i = (seq_int["t"] % seq_substeps) >> 1
+            if seq_int["note_gap"]>0:
+               #f = c + (t-c) * (2^x/16 - 1) to approximate a log going up
+               set_oscillator(seq_int["current_note"] + seq_int["note_gap"] * (log_16_step[i] - 1))
+            else:
+               #f = c + (t-c) * (2^(16-x)/16 - 1) to approximate a log going down
+               set_oscillator(seq_int["current_note"] + seq_int["note_gap"] * (log_16_step[15-i] - 1))
+    else: #standard gate timing
+        if(seq_int["gate_time_left"]<=0):
+            gate_pin.high()
+        else:
+            seq_int["gate_time_left"] -= 1
         
 
     #gradual changes like slides
-    sequencer_time += 1
+    seq_int["t"] += 1
+sequence_tick = Timer()
+def set_tempo():
+    sequence_tick.deinit()
+    sequence_tick.init(freq=sequence["tempo"]/15*32, mode=Timer.PERIODIC, callback=sequencer_update)
 
+pal1bpp_15 = framebuf.FrameBuffer(bytearray([0x0F]),2,1,framebuf.GS4_HMSB)
 #core1 tasks: display and input handling
 def core1():
     t = 0
     last_rot = rotary_encoder.value()
     current_rot = last_rot
     new_rot = 0
-    last_buttons = 0
     current_buttons = 0
+    button_history = [0]
+    held_buttons = 0
     new_buttons = 0
+    released_buttons = 0
     last_encsw = False
     current_encsw = False
     new_encsw = False
@@ -189,52 +227,115 @@ def core1():
         if(matrix_sm.rx_fifo()):
             current_buttons = matrix_sm.get()
         else:
-            current_buttons = last_buttons
+            current_buttons = button_history[0]
         current_encsw = encoder_switch.value()
-
         #find any new rising edges
         new_rot = (current_rot-last_rot+10)%20-10
-        new_buttons = current_buttons & ~last_buttons
+        new_buttons = current_buttons & ~button_history[0]
         new_encsw = current_encsw and not last_encsw
+        #and falling edges
+        released_buttons = button_history[0] & ~current_buttons
+
+        #look at past button states and see which ones are being held continuously
+        hold_frames = 10
+        if(len(button_history)>=hold_frames):
+            while len(button_history)>hold_frames:
+                button_history.pop(len(button_history)-1) #keep list short
+            held_buttons = 0xFFFFFF #24 bits
+            for i in range(hold_frames):
+                held_buttons = held_buttons & button_history[i]
+                #notably this gives us past held values but this is helpful for detecting releases from held inputs
+    
+
+
+                
 
         #check for new inputs
-        if(new_buttons):
-            note_buttons = get_button_row(new_buttons,1)*256+get_button_row(new_buttons,2)
-            for i in range(16):
-                if(note_buttons & 1<<i):
-                    if sequence["note"][15-i] == 0:
-                        sequence["note"][15-i] = last_used_note
-                    else:
-                        sequence["note"][15-i] = 0
-                    update_sequencer_frequencies()
+        #if a modifier button is newly pressed, check for current note buttons
+        #if a modifier button is currently pressed, check for new note buttons
+        #if a note button is held and then released, do nothing
+        # if a note button is short-pressed, then toggle it
+        new_mod_buttons = get_button_row(new_buttons,0)
+        current_mod_buttons = get_button_row(current_buttons,0)
+        new_note_buttons = get_button_row(new_buttons,1)*256+get_button_row(new_buttons,2)
+        current_note_buttons = get_button_row(current_buttons,1)*256+get_button_row(current_buttons,2)
+        
+        if(new_mod_buttons & 0b10000000 or get_button_row(held_buttons,0) & 0b10000000): #tempo up
+            sequence["tempo"] = sequence["tempo"] + 1
+            set_tempo()
+        if(new_mod_buttons & 0b01000000 or get_button_row(held_buttons,0) & 0b01000000): #tempo down
+            sequence["tempo"] = sequence["tempo"] - 1
+            set_tempo()
+        
+        if(new_buttons or released_buttons): #see if the buttons have changed
+            
+            if(new_mod_buttons and current_note_buttons): #punching modifiers while holding a note
+                if(new_mod_buttons & 0b00001000): #button 5
+                    for i in range(16):
+                        if(current_note_buttons & 1<<i): #if holding button
+                            if sequence["accent"][15-i] == 0:
+                                sequence["accent"][15-i] = 1
+                            else:
+                                sequence["accent"][15-i] = 0
+                if(new_mod_buttons & 0b00000100): #button 6
+                    for i in range(16):
+                        if(current_note_buttons & 1<<i): #if holding button
+                            if sequence["hold"][15-i] == 0:
+                                sequence["hold"][15-i] = 1
+                            else:
+                                sequence["hold"][15-i] = 0
+            elif (new_note_buttons and current_mod_buttons): #punching notes while holding a modifier
+                pass
+            elif (new_mod_buttons):
+                if(new_mod_buttons & 0b00100000): #play/pause
+                    sequence["pause"] = not sequence["pause"]
+                    
+            else:
+                released_note_buttons = get_button_row(released_buttons,1)*256+get_button_row(released_buttons,2)
+                held_note_buttons = get_button_row(held_buttons,1)*256+get_button_row(held_buttons,2)
+                for i in range(16):
+                    if(released_note_buttons & ~held_note_buttons & 1<<i): #if released but not from a hold
+                        if sequence["note"][15-i] == 0:
+                            sequence["note"][15-i] = last_used_note
+                        else:
+                            sequence["note"][15-i] = 0
+                        update_sequencer_frequencies()
         
         if(new_rot and current_buttons):
             note_buttons = get_button_row(current_buttons,1)*256+get_button_row(current_buttons,2)
             for i in range(16):
                 if(note_buttons & 1<<i):
-                    if sequence["note"][15-i] != 0:
-                        sequence["note"][15-i] += new_rot
-                        last_used_note = sequence["note"][15-i]
+                    if(sequence["note"][15-i] == 0):
+                        sequence["note"][15-i] = last_used_note
+                    sequence["note"][15-i] += new_rot
+                    sequence["note"][15-i] = max(sequence["note"][15-i],1)
+                    sequence["note"][15-i] = min(sequence["note"][15-i],119)
+                    last_used_note = sequence["note"][15-i]
                     update_sequencer_frequencies()
         elif(new_rot):
             last_used_note += new_rot
             last_used_note = max(last_used_note,1)
         
         oled.fill(0)
-        oled.vline(math.floor(((sequencer_time / 32)%sequence["length"]) * 256 / sequence["length"]),2,32,1)
+        oled.hline(0,44,256,15)
+        oled.vline(math.floor(((seq_int["t"] / 32)%sequence["length"]) * 256 / sequence["length"]),2,32,1)
         for i in range(len(sequence["note"])):
-            if sequence["note"][i]==0:
-                oled.line(i*16,17,i*16+9,17,1)
-            else:
-                subletter = ["font_a","font_a","font_b","font_c","font_c","font_d","font_d","font_e","font_f","font_f","font_g","font_g"]            
-                templet = framebuf.FrameBuffer(sprites[subletter[sequence["note"][i]%12]],16,15,framebuf.MONO_HLSB)
-                oled.blit(templet,i*16,20-math.floor(sequence["note"][i]/4),0)
+            if sequence["hold"][i]!=0:
+                oled.rect(i*16+2,0,22,3,1,True)
+            oled.rect(i*16,1,10,4,1,True)
+            if sequence["note"][i]!=0:
+                subletter = ["a","a","b","c","c","d","d","e","f","f","g","g"]            
+                templet = framebuf.FrameBuffer(sprites["font"][subletter[sequence["note"][i]%12]],16,15,framebuf.MONO_HLSB)
+                oled.blit(templet,i*16,24-math.floor(sequence["note"][i]/4),0,pal1bpp_15)
                 if sequence["note"][i]%12 in [1,4,6,9,11]:
                     templet = framebuf.FrameBuffer(bytearray(b"\x50\xF8\x50\xF8\x50"),8,5,framebuf.MONO_HLSB)
-                    oled.blit(templet,i*16+10,20-math.floor(sequence["note"][i]/4),0)
-            
-        oled.text(frequency_letters[last_used_note%12]+"-"+str(math.floor(last_used_note/12))+" "+str(last_used_note), 0, 56, 12)
-        
+                    oled.blit(templet,i*16+10,24-math.floor(sequence["note"][i]/4),0,pal1bpp_15)
+                if sequence["accent"][i]!=0:
+                    oled.rect(i*16,40-math.floor(sequence["note"][i]/4),12,3,15,True)
+        oled.blit(framebuf.FrameBuffer(sprites["speech_bubble_end"],16,12,framebuf.MONO_HLSB),16,44,-1,pal1bpp_15)
+        oled.blit(framebuf.FrameBuffer(sprites["dog"]["neutral"],16,12,framebuf.MONO_HLSB),0,52+math.floor(seq_int["t"] / 128)%2,0,pal1bpp_15)
+        oled.text(frequency_letters[last_used_note%12]+"-"+str(math.floor(last_used_note/12))+" "+str(last_used_note), 24, 56, 12)
+        oled.text(str(sequence["tempo"]), 128, 56, 12)
         #for i in range(24):
         #    if(last_buttons & (1 << i)):
         #        oled.fill_rect((24-i)*3, 28+(i%3)*9, 8, 8,6)
@@ -261,21 +362,21 @@ def core1():
             else:
                 np[i] = (0,0,0)
                 
-            if(15-i == math.floor(sequencer_time / 32)%16):
+            if(15-i == math.floor(seq_int["t"] / 32)%16):
                 np[i] = (np[i][0] + 4,np[i][1] + 4,np[i][2] + 4)
             np.write()
             
         oled.show()
 
         last_rot = current_rot
-        last_buttons = current_buttons
+        button_history.insert(0,current_buttons)
         last_encsw = current_encsw
         t+=1
 
 _thread.start_new_thread(core1, ())
 
 #core0 tasks: recieving interrupts
-sequence_tick = Timer(freq=200, mode=Timer.PERIODIC, callback=sequencer_update)
+sequence_tick = Timer(freq=256, mode=Timer.PERIODIC, callback=sequencer_update)
 matrix_sm.active(1)
 oscillator_sm.active(1)
 while True:
