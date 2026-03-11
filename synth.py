@@ -108,21 +108,21 @@ def get_button_row(b,r):
     return temp
 
 #notes are logarithmically spaced across octaves - 2^(1/12) apart
-frequency_letters = ["A ","A#","B ","C ","C#","D ","D#","E ","F ","F#","G ","G#"]
+frequency_letters = ["C ","C#","D ","D#","E ","F ","F#","G ","G#","A ","A#","B "]
 #lets pre-calculate those frequencies actually
 frequency_mult = [1.00000,1.05946,1.12246,1.18921,1.25992,1.33484,1.41421,1.49830,1.58740,1.68179,1.78180,1.88775]
 
-def letter_to_frequency(id):
-    #we'll use the number of the piano key from https://en.wikipedia.org/wiki/Piano_key_frequencies?useskin=vector shifted up by 2 octaves
-    #A0 is 27.5Hz so our 0 is 27.5/4 = 6.875
-    return 6.875 * (2 ** math.floor((id-1)/12)) * frequency_mult[(id-1)%12]
+def note_to_frequency(id):
+    #we'll use the midi id of the piano key from https://en.wikipedia.org/wiki/Piano_key_frequencies?useskin=vector
+    #A0 is 21 is 27.5Hz so 27.5/4 = 6.875 is at -3
+    return 6.875 * (2 ** math.floor((id+3)/12)) * frequency_mult[(id+3)%12]
 
 def update_sequencer_frequencies(): #copy our note id list into the frequency list
     for i in range(len(sequence["note"])):
         if(sequence["note"][i]==0):
             sequence["frequency"][i] = 0
         else:
-            sequence["frequency"][i] = letter_to_frequency(sequence["note"][i])
+            sequence["frequency"][i] = note_to_frequency(sequence["note"][i])
 
 # 2 ^ n/16
 log_16_step = [1.00000,1.04427,1.09051,1.13879,1.18921,1.24186,1.29684,1.35426,1.41421,1.47683,1.54221,1.61049,1.68179,1.75625,1.83401,1.91521]
@@ -178,7 +178,7 @@ def sequencer_update(tx):
         else:
             acc_volume_pin.low() #clear volume if theres no note next
 
-    if(seq_int["note_hold"]): #update oscillator pitch
+    if(seq_int["note_hold"]): #update oscillator pitch when sliding
         #to save calculation, we will use lookup tables for most of the logarithmic curves
         if(seq_int["t"] % seq_substeps % 2 == 0):
             i = (seq_int["t"] % seq_substeps) >> 1
@@ -187,7 +187,7 @@ def sequencer_update(tx):
                set_oscillator(seq_int["current_note"] + seq_int["note_gap"] * (log_16_step[i] - 1))
             else:
                #f = c + (t-c) * (2^(16-x)/16 - 1) to approximate a log going down
-               set_oscillator(seq_int["current_note"] + seq_int["note_gap"] * (log_16_step[15-i] - 1))
+               set_oscillator(seq_int["current_note"] - seq_int["note_gap"] * (log_16_step[15-i] - 1))
     else: #standard gate timing
         if(seq_int["gate_time_left"]<=0):
             gate_pin.high()
@@ -218,7 +218,7 @@ def core1():
     current_encsw = False
     new_encsw = False
     
-    last_used_note = 39
+    last_used_note = 48
     while True:
         #outline: fetch inputs, update state, refresh display
 
@@ -324,17 +324,17 @@ def core1():
                 oled.rect(i*16+2,0,22,3,1,True)
             oled.rect(i*16,1,10,4,1,True)
             if sequence["note"][i]!=0:
-                subletter = ["a","a","b","c","c","d","d","e","f","f","g","g"]            
+                subletter = ["c","c","d","d","e","f","f","g","g","a","a","b"]            
                 templet = framebuf.FrameBuffer(sprites["font"][subletter[sequence["note"][i]%12]],16,15,framebuf.MONO_HLSB)
                 oled.blit(templet,i*16,24-math.floor(sequence["note"][i]/4),0,pal1bpp_15)
-                if sequence["note"][i]%12 in [1,4,6,9,11]:
+                if sequence["note"][i]%12 in [1,3,6,8,10]:
                     templet = framebuf.FrameBuffer(bytearray(b"\x50\xF8\x50\xF8\x50"),8,5,framebuf.MONO_HLSB)
                     oled.blit(templet,i*16+10,24-math.floor(sequence["note"][i]/4),0,pal1bpp_15)
                 if sequence["accent"][i]!=0:
                     oled.rect(i*16,40-math.floor(sequence["note"][i]/4),12,3,15,True)
         oled.blit(framebuf.FrameBuffer(sprites["speech_bubble_end"],16,12,framebuf.MONO_HLSB),16,44,-1,pal1bpp_15)
         oled.blit(framebuf.FrameBuffer(sprites["dog"]["neutral"],16,12,framebuf.MONO_HLSB),0,52+math.floor(seq_int["t"] / 128)%2,0,pal1bpp_15)
-        oled.text(frequency_letters[last_used_note%12]+"-"+str(math.floor(last_used_note/12))+" "+str(last_used_note), 24, 56, 12)
+        oled.text(frequency_letters[last_used_note%12]+"-"+str(math.floor((last_used_note+3)/12)-1)+" "+str(last_used_note), 24, 56, 12)
         oled.text(str(sequence["tempo"]), 128, 56, 12)
         #for i in range(24):
         #    if(last_buttons & (1 << i)):
