@@ -9,7 +9,11 @@ import _thread
 from rotary_irq_rp2 import RotaryIRQ
 from synth_graphics import sprites
 
+def clamp(a,l,h):
+    return max(l,min(a,h))
+
 # -- PINOUT --
+
 
 # DISPLAY -  RST:3 DC:4 CS:5 SCL:6 SCA:7
 spi = SPI(0,sck=Pin(6, Pin.OUT), mosi=Pin(7, Pin.OUT))
@@ -45,6 +49,7 @@ rotary_encoder = RotaryIRQ(pin_num_clk=8,
               max_val=19, #20 pulses per rotation
               reverse=False, 
               range_mode=RotaryIRQ.RANGE_WRAP,
+            half_step=True,
               pull_up=True)
 
 # RGB - GPIO 27
@@ -52,6 +57,8 @@ np = neopixel.NeoPixel(Pin(27), 16)
 
 # AUDIO IN - GPIO 28
 audio_in = ADC(Pin(28))
+
+onboard_led = Pin("LED", Pin.OUT)
 
 # oscillator
 # set up a simple pio square wave and poke frequency with https://forums.raspberrypi.com/viewtopic.php?t=331490
@@ -130,10 +137,13 @@ log_16_step = [1.00000,1.04427,1.09051,1.13879,1.18921,1.24186,1.29684,1.35426,1
 sequence = {
     "tempo":120,
     "length":16,
+    "swing":0,
     "note":[0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
     "frequency":[0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
-    "accent":[0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
+    "accent_p":[0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
+    "accent_v":[0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
     "hold":[0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
+    "tremolo":[0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
     "gate_length":0.5,
     "pause":False
 }
@@ -143,31 +153,44 @@ seq_int = { #store all internal variables in a dict to namespace it, and also ma
     "gate_time_left":0,
     "note_hold":False,
     "current_note":0,
-    "next_note":0
+    "next_note":0,
+    "current_tremolo":0
 }
 def sequencer_update(tx):
     global seq_int, sequence, gate_pin, acc_volume_pin, acc_pitch_pin, adc_buf
     seq_substeps = 32
     #we want to run this multiple times per beat
-    if(seq_int["t"] % seq_substeps == 0):
+    if(seq_int["t"] % (seq_substeps*2) == 0) or (seq_int["t"] % (seq_substeps*2) == seq_substeps + sequence["swing"]):
         if(sequence["pause"]):
             gate_pin.high()
             acc_volume_pin.low()
             acc_pitch_pin.low()
             return
-        current_beat = math.floor(seq_int["t"]/seq_substeps)%sequence["length"]
+        current_beat = math.floor((seq_int["t"])/seq_substeps)%sequence["length"]
+        if(seq_int["t"] % (seq_substeps*2) == seq_substeps + sequence["swing"]):
+            current_beat = math.floor((seq_int["t"] - sequence["swing"])/seq_substeps)%sequence["length"]
         if(sequence["frequency"][current_beat]): #if theres a note rn
-            if(sequence["accent"][current_beat]):
+            if(sequence["accent_v"][current_beat]):
                 acc_volume_pin.high()
-                acc_pitch_pin.low()
             else:
                 acc_volume_pin.low()
+            
+            if(sequence["accent_p"][current_beat]):
                 acc_pitch_pin.high()
+            else:
+                acc_pitch_pin.low()
             
             set_oscillator(sequence["frequency"][current_beat])
-            seq_int["gate_time_left"] = math.floor(sequence["gate_length"] * seq_substeps)
+            seq_int["gate_time_left"] = math.floor(sequence["gate_length"]*seq_substeps)
+            if(seq_int["t"] % (seq_substeps*2) == seq_substeps + sequence["swing"]): #set gate length based on swing
+                seq_int["gate_time_left"] = min(math.floor(sequence["gate_length"]*seq_substeps),(seq_substeps-sequence["swing"]-1))
+            else:
+                seq_int["gate_time_left"] = min(math.floor(sequence["gate_length"]*seq_substeps),(seq_substeps+sequence["swing"]-1))
             gate_pin.low()
             
+            seq_int["current_tremolo"] = sequence["tremolo"][current_beat]
+            if(seq_int["current_tremolo"]):
+                seq_int["gate_time_left"] = 24
             if(sequence["hold"][current_beat] and sequence["frequency"][(current_beat+1)%sequence["length"]]):
                 seq_int["note_hold"] = True
                 seq_int["current_note"] = sequence["frequency"][current_beat]
@@ -175,6 +198,7 @@ def sequencer_update(tx):
                 seq_int["note_gap"] = (seq_int["next_note"]-seq_int["current_note"])
             else:
                 seq_int["note_hold"] = False
+                
         else:
             acc_volume_pin.low() #clear volume if theres no note next
 
@@ -188,14 +212,21 @@ def sequencer_update(tx):
             else:
                #f = c + (t-c) * (2^(16-x)/16 - 1) to approximate a log going down
                set_oscillator(seq_int["current_note"] - seq_int["note_gap"] * (log_16_step[15-i] - 1))
-    else: #standard gate timing
+    if(seq_int["current_tremolo"]):
+        if(seq_int["gate_time_left"]>0):
+            if seq_int["gate_time_left"] % (24 // (2+seq_int["current_tremolo"]*2)) == 0:
+                gate_pin.toggle()
+            seq_int["gate_time_left"] -= 1
+        else:
+            gate_pin.high()
+    elif not(seq_int["note_hold"]): #standard gate timing
         if(seq_int["gate_time_left"]<=0):
             gate_pin.high()
         else:
             seq_int["gate_time_left"] -= 1
         
 
-    #gradual changes like slides
+    onboard_led.value(not gate_pin.value())
     seq_int["t"] += 1
 sequence_tick = Timer()
 def set_tempo():
@@ -217,6 +248,9 @@ def core1():
     last_encsw = False
     current_encsw = False
     new_encsw = False
+    
+    popup_last_used = -99999
+    popup_shown = "none"
     
     last_used_note = 48
     while True:
@@ -260,37 +294,74 @@ def core1():
         new_note_buttons = get_button_row(new_buttons,1)*256+get_button_row(new_buttons,2)
         current_note_buttons = get_button_row(current_buttons,1)*256+get_button_row(current_buttons,2)
         
-        if(new_mod_buttons & 0b10000000 or get_button_row(held_buttons,0) & 0b10000000): #tempo up
-            sequence["tempo"] = sequence["tempo"] + 1
+        if(current_mod_buttons & 0b01000000): #tempo change
+            popup_last_used = t
+            popup_shown = "tempo"
+            sequence["tempo"] = clamp(sequence["tempo"] - new_rot,1,1000)
             set_tempo()
-        if(new_mod_buttons & 0b01000000 or get_button_row(held_buttons,0) & 0b01000000): #tempo down
-            sequence["tempo"] = sequence["tempo"] - 1
-            set_tempo()
+        if(current_mod_buttons & 0b10000000): #swing change
+            popup_last_used = t
+            popup_shown = "swing"
+            sequence["swing"] = clamp(sequence["swing"] - new_rot,-24,24)
         
         if(new_buttons or released_buttons): #see if the buttons have changed
-            
             if(new_mod_buttons and current_note_buttons): #punching modifiers while holding a note
                 if(new_mod_buttons & 0b00001000): #button 5
                     for i in range(16):
                         if(current_note_buttons & 1<<i): #if holding button
-                            if sequence["accent"][15-i] == 0:
-                                sequence["accent"][15-i] = 1
+                            if sequence["accent_v"][15-i] == 0:
+                                sequence["accent_v"][15-i] = 1
                             else:
-                                sequence["accent"][15-i] = 0
+                                sequence["accent_v"][15-i] = 0
                 if(new_mod_buttons & 0b00000100): #button 6
+                    for i in range(16):
+                        if(current_note_buttons & 1<<i): #if holding button
+                            if sequence["accent_p"][15-i] == 0:
+                                sequence["accent_p"][15-i] = 1
+                            else:
+                                sequence["accent_p"][15-i] = 0
+                if(new_mod_buttons & 0b00000010): #button 7
                     for i in range(16):
                         if(current_note_buttons & 1<<i): #if holding button
                             if sequence["hold"][15-i] == 0:
                                 sequence["hold"][15-i] = 1
                             else:
                                 sequence["hold"][15-i] = 0
+                if(new_mod_buttons & 0b00000001): #button 8
+                    for i in range(16):
+                        if(current_note_buttons & 1<<i): #if holding button
+                            sequence["tremolo"][15-i] = (sequence["tremolo"][15-i] + 1) % 4
             elif (new_note_buttons and current_mod_buttons): #punching notes while holding a modifier
-                pass
+                if(current_mod_buttons & 0b00001000): #button 5
+                    for i in range(16):
+                        if(new_note_buttons & 1<<i): #if new button
+                            if sequence["accent_v"][15-i] == 0:
+                                sequence["accent_v"][15-i] = 1
+                            else:
+                                sequence["accent_v"][15-i] = 0
+                if(current_mod_buttons & 0b00000100): #button 6
+                    for i in range(16):
+                        if(new_note_buttons & 1<<i): #if new button
+                            if sequence["accent_p"][15-i] == 0:
+                                sequence["accent_p"][15-i] = 1
+                            else:
+                                sequence["accent_p"][15-i] = 0
+                if(current_mod_buttons & 0b00000010): #button 7
+                    for i in range(16):
+                        if(new_note_buttons & 1<<i): #if new button
+                            if sequence["hold"][15-i] == 0:
+                                sequence["hold"][15-i] = 1
+                            else:
+                                sequence["hold"][15-i] = 0
+                if(current_mod_buttons & 0b00000001): #button 8
+                    for i in range(16):
+                        if(new_note_buttons & 1<<i): #if new button
+                            sequence["tremolo"][15-i] = (sequence["tremolo"][15-i] + 1) % 4
+            
             elif (new_mod_buttons):
                 if(new_mod_buttons & 0b00100000): #play/pause
                     sequence["pause"] = not sequence["pause"]
-                    
-            else:
+            elif(not current_mod_buttons): #toggle notes
                 released_note_buttons = get_button_row(released_buttons,1)*256+get_button_row(released_buttons,2)
                 held_note_buttons = get_button_row(held_buttons,1)*256+get_button_row(held_buttons,2)
                 for i in range(16):
@@ -300,29 +371,49 @@ def core1():
                         else:
                             sequence["note"][15-i] = 0
                         update_sequencer_frequencies()
-        
-        if(new_rot and current_buttons):
+        if(current_encsw and new_rot):
+            note_clip = False
+            for i in range(16):
+                if ((sequence["note"][15-i] <= 1 and new_rot>0) or (sequence["note"][15-i] >=119 and new_rot<0)) and sequence["note"][15-i] != 0:
+                    note_clip = True
+            if not note_clip:
+                for i in range(16):
+                    if sequence["note"][15-i] != 0:
+                        sequence["note"][15-i] = sequence["note"][15-i] - new_rot
+                last_used_note -= new_rot
+                last_used_note = max(last_used_note,1)
+                update_sequencer_frequencies()
+        elif(new_rot and current_buttons):
             note_buttons = get_button_row(current_buttons,1)*256+get_button_row(current_buttons,2)
             for i in range(16):
                 if(note_buttons & 1<<i):
                     if(sequence["note"][15-i] == 0):
                         sequence["note"][15-i] = last_used_note
-                    sequence["note"][15-i] += new_rot
+                    sequence["note"][15-i] -= new_rot
                     sequence["note"][15-i] = max(sequence["note"][15-i],1)
                     sequence["note"][15-i] = min(sequence["note"][15-i],119)
                     last_used_note = sequence["note"][15-i]
                     update_sequencer_frequencies()
         elif(new_rot):
-            last_used_note += new_rot
+            last_used_note -= new_rot
             last_used_note = max(last_used_note,1)
-        
+        local_t = (seq_int["t"] / 32)%sequence["length"] #t as a value of fractional beats
+        if(sequence["swing"]!=0):
+            if seq_int["t"] % 64 > 32 + sequence["swing"]: #if its the second beat
+                #get the pair then add on a fractional amount depending on how far through a beat you are
+                local_t = (math.floor(seq_int["t"] / 64)%(sequence["length"]/2)) * 2 + 1 + ((seq_int["t"] % 64 - (32+sequence["swing"])) / (32-sequence["swing"]))
+            else:
+                local_t = (math.floor(seq_int["t"] / 64)%(sequence["length"]/2)) * 2 + ((seq_int["t"] % 64) / (32+sequence["swing"]))
         oled.fill(0)
         oled.hline(0,44,256,15)
-        oled.vline(math.floor(((seq_int["t"] / 32)%sequence["length"]) * 256 / sequence["length"]),2,32,1)
+        oled.vline(math.floor(local_t * 256 / sequence["length"]),2,32,1)
         for i in range(len(sequence["note"])):
             if sequence["hold"][i]!=0:
                 oled.rect(i*16+2,0,22,3,1,True)
-            oled.rect(i*16,1,10,4,1,True)
+            if(i%2==0):
+                oled.rect(i*16,1,10+math.ceil(sequence["swing"]/2),4,1,True)
+            else:
+                oled.rect(i*16+math.ceil(sequence["swing"]/2),1,10-math.ceil(sequence["swing"]/2),4,1,True)
             if sequence["note"][i]!=0:
                 subletter = ["c","c","d","d","e","f","f","g","g","a","a","b"]            
                 templet = framebuf.FrameBuffer(sprites["font"][subletter[sequence["note"][i]%12]],16,15,framebuf.MONO_HLSB)
@@ -330,12 +421,29 @@ def core1():
                 if sequence["note"][i]%12 in [1,3,6,8,10]:
                     templet = framebuf.FrameBuffer(bytearray(b"\x50\xF8\x50\xF8\x50"),8,5,framebuf.MONO_HLSB)
                     oled.blit(templet,i*16+10,24-math.floor(sequence["note"][i]/4),0,pal1bpp_15)
-                if sequence["accent"][i]!=0:
-                    oled.rect(i*16,40-math.floor(sequence["note"][i]/4),12,3,15,True)
+                if sequence["accent_v"][i]!=0:
+                    oled.rect(i*16,40-math.floor(sequence["note"][i]/4),5,3,15,True)
+                if sequence["accent_p"][i]!=0:
+                    oled.rect(i*16+7,40-math.floor(sequence["note"][i]/4),5,3,15,True)
+                if sequence["tremolo"][i]!=0:
+                    oled.text("x"+str(1+sequence["tremolo"][i]),i*16-2,16-math.floor(sequence["note"][i]/4),15)
         oled.blit(framebuf.FrameBuffer(sprites["speech_bubble_end"],16,12,framebuf.MONO_HLSB),16,44,-1,pal1bpp_15)
         oled.blit(framebuf.FrameBuffer(sprites["dog"]["neutral"],16,12,framebuf.MONO_HLSB),0,52+math.floor(seq_int["t"] / 128)%2,0,pal1bpp_15)
-        oled.text(frequency_letters[last_used_note%12]+"-"+str(math.floor((last_used_note+3)/12)-1)+" "+str(last_used_note), 24, 56, 12)
-        oled.text(str(sequence["tempo"]), 128, 56, 12)
+        oled.text(frequency_letters[last_used_note%12]+"-"+str(math.floor((last_used_note+3)/12)-1)+" "+str(last_used_note), 24, 56, 6)
+        oled.text(str(sequence["tempo"]), 128, 56, 6)
+        oled.text(str(sequence["swing"]), 160, 56, 6)
+        
+        if(t == popup_last_used):
+            yoff = 18
+            oled.rect(30,yoff-2,200,52,2,True)
+            oled.rect(32,yoff,196,48,0,True)
+            if(popup_shown == "tempo"):
+                oled.text("Tempo:", 32, yoff+16, 12)
+                oled.text(str(sequence["tempo"]), 32, yoff+24, 12)
+            if(popup_shown == "swing"):
+                oled.text("Swing:", 32, yoff+16, 12)
+                oled.text(str(sequence["swing"]), 32, yoff+24, 12)
+                
         #for i in range(24):
         #    if(last_buttons & (1 << i)):
         #        oled.fill_rect((24-i)*3, 28+(i%3)*9, 8, 8,6)
@@ -362,7 +470,7 @@ def core1():
             else:
                 np[i] = (0,0,0)
                 
-            if(15-i == math.floor(seq_int["t"] / 32)%16):
+            if(15-i == math.floor(local_t)):
                 np[i] = (np[i][0] + 4,np[i][1] + 4,np[i][2] + 4)
             np.write()
             
