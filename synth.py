@@ -14,6 +14,7 @@ def clamp(a,l,h):
 
 # -- PINOUT --
 
+freq(125_000_000)
 
 # DISPLAY -  RST:3 DC:4 CS:5 SCL:6 SCA:7
 spi = SPI(0,sck=Pin(6, Pin.OUT), mosi=Pin(7, Pin.OUT))
@@ -23,7 +24,7 @@ res = Pin(3, Pin.OUT)
 res.value(1)
 cs = Pin(5, Pin.OUT)
 cs.value(1)
-oled = SH1122_SPI(256, 64, spi, dc, res, cs)
+oled = SH1122_SPI(256, 64, spi, dc, res, cs, 4 * 1024 * 1024) #default is 10MHz but it adds too much noise
 oled.fill(0)
 
 # SIGNALS - OSC:10 GATE:11 ACC_P:12 ACC_V:13
@@ -99,7 +100,7 @@ def matrix_PIO():
     in_(pins,3)
     push(noblock).side(0) #push isr to RX and clear col 8
     irq(0) #okay we're done
-matrix_sm = rp2.StateMachine(4, matrix_PIO, freq=20000, in_base=(matrix_row[0]), set_base=(matrix_col[0]), sideset_base=(matrix_col[4]))
+matrix_sm = rp2.StateMachine(4, matrix_PIO, freq=2000, in_base=(matrix_row[0]), set_base=(matrix_col[0]), sideset_base=(matrix_col[4]))
 
 def get_bit(word,i):
     if (word & (1<<i)):

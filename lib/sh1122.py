@@ -95,8 +95,8 @@ class SH1122(framebuf.FrameBuffer):
 
 
 class SH1122_SPI(SH1122):
-    def __init__(self, width, height, spi, dc, res, cs):
-        self.rate = 10 * 1024 * 1024
+    def __init__(self, width, height, spi, dc, res, cs, rate):
+        self.rate = rate
         dc.init(dc.OUT, value=0)
         res.init(res.OUT, value=0)
         cs.init(cs.OUT, value=1)
