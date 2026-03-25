@@ -1,8 +1,7 @@
 from PIL import Image
 import math
 results = {}
-files = ["font_0.png","font_1.png","font_2.png","font_3.png","font_4.png",
-         "font_5.png","font_6.png","font_7.png","font_8.png","font_9.png"]
+files = ["burst.png"]
 for file_name in files:
     data = bytearray()
     with Image.open("C:/Users/Kirlia/Documents/synth/graphics/"+file_name) as im:
@@ -11,7 +10,13 @@ for file_name in files:
             for x in range(8*math.ceil((im.width)/8)):
                 char*=2
                 if x < im.width:
-                    if(im.getpixel((x,y))==1):
+                    if(len(im.mode)>1):
+                        if(im.getpixel((x,y))[0]):
+                            char += 1
+                            print('#', end='')
+                        else:
+                            print('.', end='')
+                    elif(im.getpixel((x,y))):
                         char += 1
                         print('#', end='')
                     else:

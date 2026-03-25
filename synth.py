@@ -116,7 +116,7 @@ def get_button_row(b,r):
     return temp
 
 #notes are logarithmically spaced across octaves - 2^(1/12) apart
-frequency_letters = ["C ","C#","D ","D#","E ","F ","F#","G ","G#","A ","A#","B "]
+frequency_letters = ["c ","c#","d ","d#","e ","f ","f#","g ","g#","a ","a#","b "]
 #lets pre-calculate those frequencies actually
 frequency_mult = [1.00000,1.05946,1.12246,1.18921,1.25992,1.33484,1.41421,1.49830,1.58740,1.68179,1.78180,1.88775]
 
@@ -234,7 +234,28 @@ def set_tempo():
     sequence_tick.deinit()
     sequence_tick.init(freq=sequence["tempo"]/15*32, mode=Timer.PERIODIC, callback=sequencer_update)
 
-pal1bpp_15 = framebuf.FrameBuffer(bytearray([0x0F]),2,1,framebuf.GS4_HMSB)
+def pal1bpp(b):
+    return framebuf.FrameBuffer(bytearray([b]),2,1,framebuf.GS4_HMSB)
+
+def write_num(num,x,y,digits=0,padding=0,pal=15):
+    xoff = x
+    snum = str(num+0.00017)
+    if(len(snum.split(".")[0])<padding):
+        xoff += (padding - len(snum.split(".")[0])) * 12
+    if(digits==0):
+        snum = snum.split(".")[0]
+    else:
+        snum = snum.split(".")[0] + "." + snum.split(".")[1][:digits]
+    for i in range(len(snum)):
+        if(snum[i] == "."):
+            oled.blit(framebuf.FrameBuffer(sprites["font"][snum[i]],8,15,framebuf.MONO_HLSB),xoff-1,y,0,pal1bpp(pal))
+            xoff += 6
+        elif(snum[i] == "-"):
+            oled.blit(framebuf.FrameBuffer(sprites["font"][snum[i]],8,15,framebuf.MONO_HLSB),xoff+6,y,0,pal1bpp(pal))
+            xoff += 12
+        else:
+            oled.blit(framebuf.FrameBuffer(sprites["font"][snum[i]],16,15,framebuf.MONO_HLSB),xoff,y,0,pal1bpp(pal))
+            xoff += 12
 #core1 tasks: display and input handling
 def core1():
     t = 0
@@ -306,13 +327,15 @@ def core1():
             in_menu = not in_menu
         
         if(in_menu):
+            released_note_buttons = get_button_row(released_buttons,1)*256+get_button_row(released_buttons,2)
             if(new_note_buttons & 0b10000000_00000000): #adjust gate length
                 sequence["gate_length"] -= 1/16
                 sequence["gate_length"] = max(sequence["gate_length"], 1/16)
             elif(new_note_buttons & 0b01000000_00000000):
                 sequence["gate_length"] += 1/16
                 sequence["gate_length"] = min(sequence["gate_length"], 1)
-                
+            elif(released_note_buttons & 0b00000001_00000000):
+                in_menu = False
             elif(new_note_buttons & 0b00000000_10000000): #adjust led brightness
                 if(rgb_brightness == 0):
                     rgb_brightness = 0.125
@@ -347,7 +370,8 @@ def core1():
                 popup_last_used = t
                 popup_shown = "swing"
                 sequence["swing"] = clamp(sequence["swing"] - new_rot,-24,24)
-            
+            if(current_mod_buttons & 0b00100000 and sequence["pause"]): #pan cursor when paused
+                seq_int["t"] = (seq_int["t"]-	32*new_rot)%(32*sequence["length"])
             if(new_buttons or released_buttons): #see if the buttons have changed
                 if(new_mod_buttons and current_note_buttons): #punching modifiers while holding a note
                     if(new_mod_buttons & 0b00001000): #button 5
@@ -449,48 +473,62 @@ def core1():
         if(in_menu):
             oled.fill(0)
             # gate length
-            oled.text("Gate:",0,0,15)
-            oled.text(str(sequence["gate_length"]),0,8,15)
+            oled.text("note",0,0,15)
+            oled.text("len",36,0,15)
+            oled.rect(61,5,2,2,15)
+            write_num(sequence["gate_length"], 12, 9, 2)
+            oled.hline(1,17,7,12)
+            oled.hline(56,17,7,12)
+            oled.vline(59,14,7,12)
+            oled.hline(8,28,48,5)
+            oled.hline(8,29,48,5)
+            oled.hline(8,28,math.floor(48*sequence["gate_length"]),15)
+            oled.hline(8,29,math.floor(48*sequence["gate_length"]),15)
+            
+            #back!
+            oled.text("back",225,12,15)
             
             #led brightness
-            oled.text("glow",-1,56,15)
+            oled.text("brgt",-1,49,15)
+            oled.text("ness",-1,57,15)
             #0.125, 0.25, 0.5, 1, 2
             for i in range(5):
                 if(rgb_brightness*8 >= (1 << i)):
-                    oled.rect(i*6,50-2*i,5,5+2*i,12,True)
+                    oled.rect(i*6,42-2*i,5,5+2*i,15,True)
                 else:
-                    oled.rect(i*6,50-2*i,5,5+2*i,1,False)
+                    oled.rect(i*6,42-2*i,5,5+2*i,5,False)
             
             #led color
-            oled.text("hue",36,32,15)
-            oled.text(str(rgb_color_palette),32,40,15)
+            oled.text("pal",36,32,15)
+            oled.text("ette",32,40,15)
+            oled.blit(framebuf.FrameBuffer(sprites["font"][chr(97+rgb_color_palette)],16,15,framebuf.MONO_HLSB),233,48,0,pal1bpp(6))
             
             #clear
             if(menu_clear_timer >= menu_safety_hold_threshold):
                 oled.text("empt",224,32,15)
                 oled.text("ied!",224,40,15)
             else:
-                oled.text("WIPE",224,32,15)
-                oled.text("SEQU",224,40,15)
-                oled.text("ENCE",224,48,15)
+                oled.text("WIPE",225,34,15)
+                oled.text("SEQU",225,42,15)
+                oled.text("ENCE",225,50,15)
+                oled.text("hold",225,57,2)
             if(menu_clear_timer > 0 and menu_clear_timer < menu_safety_hold_threshold):
                 perc = menu_clear_timer / menu_safety_hold_threshold
-                oled.rect(224,56,math.floor(32*perc),8,15,True)
+                oled.rect(224,57,math.floor(32*perc),8,15,True)
             
                 
             # dividers
-            oled.hline(0,32,256,12)
+            oled.hline(0,32,256,4)
             
-            oled.vline( 32,32,64,12)
-            oled.vline( 64, 0,64,12)
-            oled.vline( 96, 0,64,12)
-            oled.vline(128, 0,64,12)
-            oled.vline(160, 0,64,12)
-            oled.vline(192, 0,64,12)
-            oled.vline(224, 0,64,12)
+            oled.vline( 32,32,64,4)
+            oled.vline( 64, 0,64,4)
+            oled.vline( 96, 0,64,4)
+            oled.vline(128, 0,64,4)
+            oled.vline(160, 0,64,4)
+            oled.vline(192, 0,64,4)
+            oled.vline(224, 0,64,4)
         else:
             oled.fill(0)
-            oled.hline(0,44,256,15)
             oled.vline(math.floor(local_t * 256 / sequence["length"]),2,32,1)
             for i in range(len(sequence["note"])):
                 if sequence["hold"][i]!=0:
@@ -499,35 +537,47 @@ def core1():
                     oled.rect(i*16,1,10+math.ceil(sequence["swing"]/2),4,1,True)
                 else:
                     oled.rect(i*16+math.ceil(sequence["swing"]/2),1,10-math.ceil(sequence["swing"]/2),4,1,True)
+            for i in range(len(sequence["note"])):
                 if sequence["note"][i]!=0:
-                    subletter = ["c","c","d","d","e","f","f","g","g","a","a","b"]            
-                    templet = framebuf.FrameBuffer(sprites["font"][subletter[sequence["note"][i]%12]],16,15,framebuf.MONO_HLSB)
-                    oled.blit(templet,i*16,24-math.floor(sequence["note"][i]/4),0,pal1bpp_15)
-                    if sequence["note"][i]%12 in [1,3,6,8,10]:
+                    letter = frequency_letters[sequence["note"][i]%12]
+                    templet = framebuf.FrameBuffer(sprites["font"][letter[0]],16,15,framebuf.MONO_HLSB)
+                    oled.blit(templet,i*16,24-math.floor(sequence["note"][i]/4),0,pal1bpp(15))
+                    if letter[1]=="#":
                         templet = framebuf.FrameBuffer(bytearray(b"\x50\xF8\x50\xF8\x50"),8,5,framebuf.MONO_HLSB)
-                        oled.blit(templet,i*16+10,24-math.floor(sequence["note"][i]/4),0,pal1bpp_15)
+                        oled.blit(templet,i*16+10,24-math.floor(sequence["note"][i]/4),0,pal1bpp(15))
                     if sequence["accent_v"][i]!=0:
-                        oled.rect(i*16,40-math.floor(sequence["note"][i]/4),5,3,15,True)
+                        oled.blit(framebuf.FrameBuffer(sprites["burst"],16,6,framebuf.MONO_HLSB),i*16,17-math.floor(sequence["note"][i]/4),0,pal1bpp(15))
                     if sequence["accent_p"][i]!=0:
-                        oled.rect(i*16+7,40-math.floor(sequence["note"][i]/4),5,3,15,True)
+                        oled.blit(framebuf.FrameBuffer(bytearray(b"\x99\x90\x66\x60"),16,2,framebuf.MONO_HLSB),i*16,40-math.floor(sequence["note"][i]/4),0,pal1bpp(15))
                     if sequence["tremolo"][i]!=0:
-                        oled.text("x"+str(1+sequence["tremolo"][i]),i*16-2,16-math.floor(sequence["note"][i]/4),15)
-            oled.blit(framebuf.FrameBuffer(sprites["speech_bubble_end"],16,12,framebuf.MONO_HLSB),16,44,-1,pal1bpp_15)
-            oled.blit(framebuf.FrameBuffer(sprites["dog"]["neutral"],16,12,framebuf.MONO_HLSB),0,52+math.floor(seq_int["t"] / 128)%2,0,pal1bpp_15)
-            oled.text(frequency_letters[last_used_note%12]+"-"+str(math.floor((last_used_note+3)/12)-1)+" "+str(last_used_note), 24, 56, 6)
-            oled.text(str(sequence["tempo"]), 128, 56, 6)
+                        oled.text("x"+str(1+sequence["tremolo"][i]),i*16-2,40+sequence["accent_p"][i]*2-math.floor(sequence["note"][i]/4),15)
+            oled.hline(0,44,256,15)
+            oled.blit(framebuf.FrameBuffer(sprites["speech_bubble_end"],16,12,framebuf.MONO_HLSB),16,44,-1,pal1bpp(15))
+            if(math.floor(seq_int["t"] / 32)%16==12 or (sequence["pause"] and math.floor(t/5)%16==15)):
+                oled.blit(framebuf.FrameBuffer(sprites["dog"]["blink"],16,12,framebuf.MONO_HLSB),-1,52-math.floor(seq_int["t"] / 128)%2,0,pal1bpp(15))
+            else:
+                oled.blit(framebuf.FrameBuffer(sprites["dog"]["neutral"],16,12,framebuf.MONO_HLSB),-1,52-math.floor(seq_int["t"] / 128)%2,0,pal1bpp(15))
+                oled.vline(9,56-math.floor(seq_int["t"] / 128)%2,2,6)
+            oled.hline(0,63,8,15)
+            write_num(sequence["tempo"],32,48,0,3,6)
+            oled.text("bpm", 68, 56, 6)
             oled.text(str(sequence["swing"]), 160, 56, 6)
-        
+                       
+            letter = frequency_letters[last_used_note%12]
+            oled.blit(framebuf.FrameBuffer(sprites["font"][letter[0]],16,15,framebuf.MONO_HLSB),233,48,0,pal1bpp(6))
+            if letter[1]=="#":
+                oled.blit(framebuf.FrameBuffer(bytearray(b"\x50\xF8\x50\xF8\x50"),8,5,framebuf.MONO_HLSB),242,48,0,pal1bpp(6))
+            oled.text(str(math.floor((last_used_note+3)/12)-1),242,56,6)
         if(t == popup_last_used):
             yoff = 18
             oled.rect(30,yoff-2,200,52,2,True)
             oled.rect(32,yoff,196,48,0,True)
             if(popup_shown == "tempo"):
-                oled.text("Tempo:", 32, yoff+16, 12)
-                oled.text(str(sequence["tempo"]), 32, yoff+24, 12)
+                oled.text("Tempo:", 32, yoff, 12)
+                write_num(sequence["tempo"], 32, yoff + 16, 0, 3)
             if(popup_shown == "swing"):
-                oled.text("Swing:", 32, yoff+16, 12)
-                oled.text(str(sequence["swing"]), 32, yoff+24, 12)
+                oled.text("Swing:", 32, yoff, 12)
+                write_num(sequence["swing"], 32, yoff + 16, 0, 2)
                 
         #for i in range(24):
         #    if(last_buttons & (1 << i)):
