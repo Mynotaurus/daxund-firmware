@@ -8,6 +8,8 @@ import rp2
 import _thread
 from rotary_irq_rp2 import RotaryIRQ
 from synth_graphics import sprites
+import json
+import os
 
 def clamp(a,l,h):
     return max(l,min(a,h))
@@ -237,6 +239,7 @@ def set_tempo():
 def pal1bpp(b):
     return framebuf.FrameBuffer(bytearray([b]),2,1,framebuf.GS4_HMSB)
 
+hexsymbols = ["0","1","2","3","4","5","6","7","8","9","a","b","c","d","e","f"]
 def write_num(num,x,y,digits=0,padding=0,pal=15):
     xoff = x
     snum = str(num+0.00017)
@@ -256,6 +259,33 @@ def write_num(num,x,y,digits=0,padding=0,pal=15):
         else:
             oled.blit(framebuf.FrameBuffer(sprites["font"][snum[i]],16,15,framebuf.MONO_HLSB),xoff,y,0,pal1bpp(pal))
             xoff += 12
+            
+def load_folder_to_str(filenum):
+    temp = ""
+    with open("/"+str(filenum)+".json","r") as file:
+        temp = file.read()
+        file.close()
+    return temp
+
+def load(filenum,slot):
+    global sequence
+    with open("/"+str(filenum)+".json","r") as file:
+        loadobj = json.loads(file.read())
+        sequence = json.loads(json.dumps(loadobj[str(slot)]))
+        print(sequence)
+        file.close()
+
+def save(filenum,slot):
+    saveobj = {}
+    with open("/"+str(filenum)+".json","r") as file:
+        saveobj = json.loads(file.read())
+        file.close()
+    saveobj[str(slot)] = json.loads(json.dumps(sequence))
+    with open("/"+str(filenum)+".json","w") as file:
+        file.write(json.dumps(saveobj))
+        file.close()
+        
+    
 #core1 tasks: display and input handling
 def core1():
     t = 0
@@ -272,9 +302,15 @@ def core1():
     new_encsw = False
     in_menu = False
     menu_clear_timer = 0
-    menu_safety_hold_threshold = 120
+    menu_save_timer = 0
+    menu_load_timer = 0
+    menu_safety_hold_threshold = 30
     rgb_brightness = 1
     rgb_color_palette = 0
+    file_picker_page = 0
+    current_file_id = -1
+    temp_file_id = -1
+    temp_folder = {}
     
     popup_last_used = -99999
     popup_shown = "none"
@@ -324,9 +360,32 @@ def core1():
         if(new_mod_buttons & 0b00100000): #play/pause
             sequence["pause"] = not sequence["pause"]
         if(new_mod_buttons & 0b00010000): #menu
-            in_menu = not in_menu
+            if(file_picker_page>0):
+                file_picker_page = 0
+            else:
+                in_menu = not in_menu
         
-        if(in_menu):
+        if(file_picker_page>0): #pick file
+            if(file_picker_page==1): #set folder
+                if(new_note_buttons):
+                    for i in range(16):
+                        if(new_note_buttons & 0b10000000_00000000 >> i):
+                            temp_file_id = i << 4
+                    temp_folder = json.loads(load_folder_to_str(temp_file_id >> 4))
+                    file_picker_page += 1
+            elif(file_picker_page==2): #set file
+                if(new_note_buttons):
+                    for i in range(16):
+                        if(new_note_buttons & 0b10000000_00000000 >> i):
+                            temp_file_id += i
+                    file_picker_page += 1
+            elif(file_picker_page==3): #doublecheck
+                if(new_note_buttons & 0b01): #cancel
+                    file_picker_page = 0
+                elif(new_note_buttons & 0b10):
+                    file_picker_page = 0
+                    current_file_id = temp_file_id
+        elif(in_menu):
             released_note_buttons = get_button_row(released_buttons,1)*256+get_button_row(released_buttons,2)
             if(new_note_buttons & 0b10000000_00000000): #adjust gate length
                 sequence["gate_length"] -= 1/16
@@ -334,6 +393,8 @@ def core1():
             elif(new_note_buttons & 0b01000000_00000000):
                 sequence["gate_length"] += 1/16
                 sequence["gate_length"] = min(sequence["gate_length"], 1)
+            elif(new_note_buttons & 0b00000100_00000000):
+                file_picker_page = 1
             elif(released_note_buttons & 0b00000001_00000000):
                 in_menu = False
             elif(new_note_buttons & 0b00000000_10000000): #adjust led brightness
@@ -345,8 +406,20 @@ def core1():
                     rgb_brightness = 0
             elif(new_note_buttons & 0b00000000_01000000): #adjust led palette
                 rgb_color_palette = (rgb_color_palette + 1)%7
-                
-
+            
+            if(current_note_buttons & 0b00001000_00000000)  and current_file_id != -1:
+                menu_save_timer += 1
+                if(menu_save_timer == menu_safety_hold_threshold):
+                    save(current_file_id >> 4,current_file_id%16)
+            else:
+                menu_save_timer = 0
+            if(current_note_buttons & 0b00000010_00000000) and current_file_id != -1:
+                menu_load_timer += 1
+                if(menu_load_timer == menu_safety_hold_threshold):
+                    load(current_file_id >> 4,current_file_id%16)
+            else:
+                menu_load_timer = 0
+            
             if(current_note_buttons &0b00000000_00000001):
                 #clear sequence
                 menu_clear_timer += 1
@@ -371,7 +444,7 @@ def core1():
                 popup_shown = "swing"
                 sequence["swing"] = clamp(sequence["swing"] - new_rot,-24,24)
             if(current_mod_buttons & 0b00100000 and sequence["pause"]): #pan cursor when paused
-                seq_int["t"] = (seq_int["t"]-	32*new_rot)%(32*sequence["length"])
+                seq_int["t"] = (seq_int["t"]-32*new_rot)%(32*sequence["length"])
             if(new_buttons or released_buttons): #see if the buttons have changed
                 if(new_mod_buttons and current_note_buttons): #punching modifiers while holding a note
                     if(new_mod_buttons & 0b00001000): #button 5
@@ -470,7 +543,63 @@ def core1():
                 local_t = (math.floor(seq_int["t"] / 64)%(sequence["length"]/2)) * 2 + 1 + ((seq_int["t"] % 64 - (32+sequence["swing"])) / (32-sequence["swing"]))
             else:
                 local_t = (math.floor(seq_int["t"] / 64)%(sequence["length"]/2)) * 2 + ((seq_int["t"] % 64) / (32+sequence["swing"]))
-        if(in_menu):
+        if(file_picker_page==3): #check sequence
+            oled.fill(0)
+            if(str(temp_file_id%16) in temp_folder.keys()):
+                for i in range(len(temp_folder[str(temp_file_id%16)]["note"])):
+                    oled.rect(i*16,0,10,2,1,True)
+                    if temp_folder[str(temp_file_id%16)]["note"][i]!=0:
+                        letter = frequency_letters[temp_folder[str(temp_file_id%16)]["note"][i]%12]
+                        templet = framebuf.FrameBuffer(sprites["font"][letter[0]],16,15,framebuf.MONO_HLSB)
+                        oled.blit(templet,i*16,8,0,pal1bpp(15))
+                        if letter[1]=="#":
+                            templet = framebuf.FrameBuffer(bytearray(b"\x50\xF8\x50\xF8\x50"),8,5,framebuf.MONO_HLSB)
+                            oled.blit(templet,i*16+10,8,0,pal1bpp(15))
+                        if temp_folder[str(temp_file_id%16)]["accent_v"][i]!=0:
+                            oled.blit(framebuf.FrameBuffer(sprites["burst"],16,6,framebuf.MONO_HLSB),i*16,1,0,pal1bpp(15))
+                        if temp_folder[str(temp_file_id%16)]["accent_p"][i]!=0:
+                            oled.blit(framebuf.FrameBuffer(bytearray(b"\x99\x90\x66\x60"),16,2,framebuf.MONO_HLSB),i*16,24,0,pal1bpp(15))
+                        if temp_folder[str(temp_file_id%16)]["tremolo"][i]!=0:
+                            oled.text("x"+str(1+temp_folder[str(temp_file_id%16)]["tremolo"][i]),i*16-2,24+temp_folder[str(temp_file_id%16)]["accent_p"][i]*3,15)
+            else:
+                oled.text("this sequence is empty...",16,12,4)
+            oled.hline(0,32,256,4)
+            oled.vline(192,32,64,4)
+            oled.vline(224,32,64,4)
+            oled.blit(framebuf.FrameBuffer(sprites["folder"],16,15,framebuf.MONO_HLSB),0,40,0,pal1bpp(15))
+            oled.blit(framebuf.FrameBuffer(sprites["font"][hexsymbols[temp_file_id>>4]],16,15,framebuf.MONO_HLSB),12,40,0,pal1bpp(15))
+            oled.blit(framebuf.FrameBuffer(sprites["file"],16,15,framebuf.MONO_HLSB),24,40,0,pal1bpp(15))
+            oled.blit(framebuf.FrameBuffer(sprites["font"][hexsymbols[temp_file_id%16]],16,15,framebuf.MONO_HLSB),36,40,0,pal1bpp(15))
+            oled.text("use this file?",72,48,15)
+            oled.text("yep",196,48,15)
+            oled.text("no",232,48,15)
+        elif(file_picker_page>0): #pick file
+            oled.fill(0)
+            if(file_picker_page==2): #folder is selected
+                oled.text("choose file from",4,4,15)
+                oled.blit(framebuf.FrameBuffer(sprites["folder"],16,15,framebuf.MONO_HLSB),140,1,0,pal1bpp(15))
+                oled.blit(framebuf.FrameBuffer(sprites["font"][hexsymbols[temp_file_id>>4]],16,15,framebuf.MONO_HLSB),152,1,0,pal1bpp(15))
+                for i in range(8):
+                    if(str(i) in temp_folder.keys()):
+                        if(sum(temp_folder[str(i)]["frequency"])!=0):
+                            oled.blit(framebuf.FrameBuffer(sprites["burst"],16,6,framebuf.MONO_HLSB),i*32+10,18,0,pal1bpp(15))
+                    if(str(i+8) in temp_folder.keys()):
+                        if(sum(temp_folder[str(i+8)]["frequency"])!=0):
+                            oled.blit(framebuf.FrameBuffer(sprites["burst"],16,6,framebuf.MONO_HLSB),i*32+10,42,0,pal1bpp(15))    
+            else:
+                oled.text("choose folder",4,4,15)
+            for i in range(8):
+                oled.blit(framebuf.FrameBuffer(sprites["font"][hexsymbols[i]],16,15,framebuf.MONO_HLSB),i*32+10,24,0,pal1bpp(15))
+                oled.blit(framebuf.FrameBuffer(sprites["font"][hexsymbols[i+8]],16,15,framebuf.MONO_HLSB),i*32+10,48,0,pal1bpp(15))
+            oled.hline(0,40,256,4)
+            oled.vline( 32,16,48,4)
+            oled.vline( 64,16,48,4)
+            oled.vline( 96,16,48,4)
+            oled.vline(128,16,48,4)
+            oled.vline(160,16,48,4)
+            oled.vline(192,16,48,4)
+            oled.vline(224,16,48,4)
+        elif(in_menu):
             oled.fill(0)
             # gate length
             oled.text("note",0,0,15)
@@ -484,6 +613,39 @@ def core1():
             oled.hline(8,29,48,5)
             oled.hline(8,28,math.floor(48*sequence["gate_length"]),15)
             oled.hline(8,29,math.floor(48*sequence["gate_length"]),15)
+            
+            #save!
+            if(current_file_id > -1):
+                oled.blit(framebuf.FrameBuffer(sprites["folder"],16,15,framebuf.MONO_HLSB),154,2,0,pal1bpp(15))
+                oled.blit(framebuf.FrameBuffer(sprites["font"][hexsymbols[current_file_id>>4]],16,15,framebuf.MONO_HLSB),166,2,0,pal1bpp(15))
+                oled.blit(framebuf.FrameBuffer(sprites["file"],16,15,framebuf.MONO_HLSB),178,2,0,pal1bpp(15))
+                oled.blit(framebuf.FrameBuffer(sprites["font"][hexsymbols[current_file_id%16]],16,15,framebuf.MONO_HLSB),190,2,0,pal1bpp(15))
+            else:
+                oled.text("NO FILE", 140, 0, 15)
+            
+            if(current_file_id==-1):
+                oled.text("save",128,24,2)
+            elif(menu_save_timer >= menu_safety_hold_threshold):
+                oled.text("OK!",128,24,15)
+            else:
+                oled.text("save",128,24,15)
+            if(menu_save_timer > 0 and menu_save_timer < menu_safety_hold_threshold):
+                perc = menu_save_timer / menu_safety_hold_threshold
+                oled.rect(128,24,math.floor(32*perc),8,15,True)
+            
+            #pick!
+            oled.text("pick",160,22,15)
+            
+            #load!
+            if(current_file_id==-1):
+                oled.text("load",192,24,2)
+            elif(menu_load_timer >= menu_safety_hold_threshold):
+                oled.text("OK!",192,24,15)
+            else:
+                oled.text("load",192,24,15)
+            if(menu_load_timer > 0 and menu_load_timer < menu_safety_hold_threshold):
+                perc = menu_load_timer / menu_safety_hold_threshold
+                oled.rect(192,24,math.floor(32*perc),8,15,True)
             
             #back!
             oled.text("back",225,12,15)
@@ -501,7 +663,7 @@ def core1():
             #led color
             oled.text("pal",36,32,15)
             oled.text("ette",32,40,15)
-            oled.blit(framebuf.FrameBuffer(sprites["font"][chr(97+rgb_color_palette)],16,15,framebuf.MONO_HLSB),233,48,0,pal1bpp(6))
+            oled.blit(framebuf.FrameBuffer(sprites["font"][chr(97+rgb_color_palette)],16,15,framebuf.MONO_HLSB),44,48,0,pal1bpp(15))
             
             #clear
             if(menu_clear_timer >= menu_safety_hold_threshold):
@@ -524,8 +686,8 @@ def core1():
             oled.vline( 64, 0,64,4)
             oled.vline( 96, 0,64,4)
             oled.vline(128, 0,64,4)
-            oled.vline(160, 0,64,4)
-            oled.vline(192, 0,64,4)
+            oled.vline(160,32,64,4)
+            oled.vline(192,32,64,4)
             oled.vline(224, 0,64,4)
         else:
             oled.fill(0)
@@ -642,6 +804,14 @@ def core1():
         t+=1
 
 _thread.start_new_thread(core1, ())
+
+#set up files
+files = os.listdir()
+for i in range(16):
+    if (str(i)+".json") not in files:
+        file = open(str(i)+".json", "w")
+        file.write("{}")
+        file.close()
 
 #core0 tasks: recieving interrupts
 sequence_tick = Timer(freq=256, mode=Timer.PERIODIC, callback=sequencer_update)
