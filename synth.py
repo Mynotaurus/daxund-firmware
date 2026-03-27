@@ -10,6 +10,7 @@ from rotary_irq_rp2 import RotaryIRQ
 from synth_graphics import sprites
 import json
 import os
+import random
 
 def clamp(a,l,h):
     return max(l,min(a,h))
@@ -157,8 +158,18 @@ seq_int = { #store all internal variables in a dict to namespace it, and also ma
     "note_hold":False,
     "current_note":0,
     "next_note":0,
-    "current_tremolo":0
+    "current_tremolo":0,
+    "shuffle":False
 }
+
+def randomise_sequence():
+    for i in range(15): #fisher yates shuffle yay
+        swap_index = random.randint(i,15)
+        temphold = sequence["note"][swap_index]
+        sequence["note"][swap_index] = sequence["note"][i]
+        sequence["note"][i] = temphold
+    update_sequencer_frequencies()
+
 def sequencer_update(tx):
     global seq_int, sequence, gate_pin, acc_volume_pin, acc_pitch_pin, adc_buf
     seq_substeps = 32
@@ -228,10 +239,13 @@ def sequencer_update(tx):
         else:
             seq_int["gate_time_left"] -= 1
         
-
+    if((seq_int["t"]+1) % (seq_substeps*sequence["length"]) == 0 and seq_int["shuffle"]):
+        randomise_sequence()
+    
     onboard_led.value(not gate_pin.value())
     seq_int["t"] += 1
 sequence_tick = Timer()
+
 def set_tempo():
     sequence_tick.deinit()
     sequence_tick.init(freq=sequence["tempo"]/15*32, mode=Timer.PERIODIC, callback=sequencer_update)
@@ -274,6 +288,8 @@ def load(filenum,slot):
         sequence = json.loads(json.dumps(loadobj[str(slot)]))
         print(sequence)
         file.close()
+    update_sequencer_frequencies()
+    set_tempo()
 
 def save(filenum,slot):
     saveobj = {}
@@ -304,6 +320,7 @@ def core1():
     menu_clear_timer = 0
     menu_save_timer = 0
     menu_load_timer = 0
+    menu_shuffle_timer = 0
     menu_safety_hold_threshold = 30
     rgb_brightness = 1
     rgb_color_palette = 0
@@ -419,6 +436,14 @@ def core1():
                     load(current_file_id >> 4,current_file_id%16)
             else:
                 menu_load_timer = 0
+            
+            if(current_note_buttons &0b00000000_00000010):
+                #clear sequence
+                menu_shuffle_timer += 1
+                if(menu_shuffle_timer == menu_safety_hold_threshold):
+                    seq_int["shuffle"] = not seq_int["shuffle"]
+            else:
+                menu_shuffle_timer = 0
             
             if(current_note_buttons &0b00000000_00000001):
                 #clear sequence
@@ -576,9 +601,9 @@ def core1():
         elif(file_picker_page>0): #pick file
             oled.fill(0)
             if(file_picker_page==2): #folder is selected
-                oled.text("choose file from",4,4,15)
-                oled.blit(framebuf.FrameBuffer(sprites["folder"],16,15,framebuf.MONO_HLSB),140,1,0,pal1bpp(15))
-                oled.blit(framebuf.FrameBuffer(sprites["font"][hexsymbols[temp_file_id>>4]],16,15,framebuf.MONO_HLSB),152,1,0,pal1bpp(15))
+                oled.text("choose sequence from",4,4,15)
+                oled.blit(framebuf.FrameBuffer(sprites["folder"],16,15,framebuf.MONO_HLSB),172,1,0,pal1bpp(15))
+                oled.blit(framebuf.FrameBuffer(sprites["font"][hexsymbols[temp_file_id>>4]],16,15,framebuf.MONO_HLSB),184,1,0,pal1bpp(15))
                 for i in range(8):
                     if(str(i) in temp_folder.keys()):
                         if(sum(temp_folder[str(i)]["frequency"])!=0):
@@ -616,36 +641,36 @@ def core1():
             
             #save!
             if(current_file_id > -1):
-                oled.blit(framebuf.FrameBuffer(sprites["folder"],16,15,framebuf.MONO_HLSB),154,2,0,pal1bpp(15))
-                oled.blit(framebuf.FrameBuffer(sprites["font"][hexsymbols[current_file_id>>4]],16,15,framebuf.MONO_HLSB),166,2,0,pal1bpp(15))
-                oled.blit(framebuf.FrameBuffer(sprites["file"],16,15,framebuf.MONO_HLSB),178,2,0,pal1bpp(15))
-                oled.blit(framebuf.FrameBuffer(sprites["font"][hexsymbols[current_file_id%16]],16,15,framebuf.MONO_HLSB),190,2,0,pal1bpp(15))
+                oled.blit(framebuf.FrameBuffer(sprites["folder"],16,15,framebuf.MONO_HLSB),152,0,0,pal1bpp(15))
+                oled.blit(framebuf.FrameBuffer(sprites["font"][hexsymbols[current_file_id>>4]],16,15,framebuf.MONO_HLSB),164,0,0,pal1bpp(15))
+                oled.blit(framebuf.FrameBuffer(sprites["file"],16,15,framebuf.MONO_HLSB),176,0,0,pal1bpp(15))
+                oled.blit(framebuf.FrameBuffer(sprites["font"][hexsymbols[current_file_id%16]],16,15,framebuf.MONO_HLSB),188,0,0,pal1bpp(15))
             else:
-                oled.text("NO FILE", 140, 0, 15)
+                oled.text("NO FILE", 150, 3, 15)
             
             if(current_file_id==-1):
-                oled.text("save",128,24,2)
+                oled.text("save",128,21,2)
             elif(menu_save_timer >= menu_safety_hold_threshold):
-                oled.text("OK!",128,24,15)
+                oled.text("OK!",128+4,21,15)
             else:
-                oled.text("save",128,24,15)
+                oled.text("save",128,21,15)
             if(menu_save_timer > 0 and menu_save_timer < menu_safety_hold_threshold):
                 perc = menu_save_timer / menu_safety_hold_threshold
-                oled.rect(128,24,math.floor(32*perc),8,15,True)
+                oled.rect(128,24,math.floor(32*perc),4,15,True)
             
             #pick!
-            oled.text("pick",160,22,15)
+            oled.text("set",165,21,15)
             
             #load!
             if(current_file_id==-1):
-                oled.text("load",192,24,2)
+                oled.text("load",192,21,2)
             elif(menu_load_timer >= menu_safety_hold_threshold):
-                oled.text("OK!",192,24,15)
+                oled.text("OK!",192+4,21,15)
             else:
-                oled.text("load",192,24,15)
+                oled.text("load",192,21,15)
             if(menu_load_timer > 0 and menu_load_timer < menu_safety_hold_threshold):
                 perc = menu_load_timer / menu_safety_hold_threshold
-                oled.rect(192,24,math.floor(32*perc),8,15,True)
+                oled.rect(192,24,math.floor(32*perc),4,15,True)
             
             #back!
             oled.text("back",225,12,15)
@@ -664,6 +689,22 @@ def core1():
             oled.text("pal",36,32,15)
             oled.text("ette",32,40,15)
             oled.blit(framebuf.FrameBuffer(sprites["font"][chr(97+rgb_color_palette)],16,15,framebuf.MONO_HLSB),44,48,0,pal1bpp(15))
+            
+            #shuffle
+            if(menu_shuffle_timer >= menu_safety_hold_threshold):
+                oled.text("togg",192,32,15)
+                oled.text("led!",192,40,15)
+            else:
+                oled.text("shuf",192,34,15)
+                oled.text("fle",192,42,15)
+                oled.text("mode",192,50,15)
+                if(seq_int["shuffle"]):
+                    oled.text("ON!",196,57,15)
+                else:
+                    oled.text("OFF",196,57,2)
+            if(menu_shuffle_timer > 0 and menu_shuffle_timer < menu_safety_hold_threshold):
+                perc = menu_shuffle_timer / menu_safety_hold_threshold
+                oled.rect(192,57,math.floor(32*perc),8,15,True)
             
             #clear
             if(menu_clear_timer >= menu_safety_hold_threshold):
@@ -723,7 +764,6 @@ def core1():
             oled.hline(0,63,8,15)
             write_num(sequence["tempo"],32,48,0,3,6)
             oled.text("bpm", 68, 56, 6)
-            oled.text(str(sequence["swing"]), 160, 56, 6)
                        
             letter = frequency_letters[last_used_note%12]
             oled.blit(framebuf.FrameBuffer(sprites["font"][letter[0]],16,15,framebuf.MONO_HLSB),233,48,0,pal1bpp(6))
@@ -735,10 +775,10 @@ def core1():
             oled.rect(30,yoff-2,200,52,2,True)
             oled.rect(32,yoff,196,48,0,True)
             if(popup_shown == "tempo"):
-                oled.text("Tempo:", 32, yoff, 12)
+                oled.text("Tempo:", 32, yoff+2, 12)
                 write_num(sequence["tempo"], 32, yoff + 16, 0, 3)
             if(popup_shown == "swing"):
-                oled.text("Swing:", 32, yoff, 12)
+                oled.text("Swing:", 32, yoff+2, 12)
                 write_num(sequence["swing"], 32, yoff + 16, 0, 2)
                 
         #for i in range(24):
