@@ -71,13 +71,19 @@ onboard_led = Pin("LED", Pin.OUT)
 def oscillator_PIO():
     set(pins,1)
     nop() [30]
+    nop() [31]
+    nop() [31]
+    nop() [31]
     set(pins,0)
     nop() [30]
+    nop() [31]
+    nop() [31]
+    nop() [31]
 oscillator_sm = rp2.StateMachine(5, oscillator_PIO, freq=16000, set_base=(osc_pin))
 OSC_CLKDIV = 0x50300000 + 0x0e0
 def set_oscillator(frequency):
     if(frequency!=0):
-        divider = freq() / (64 * frequency)
+        divider = freq() / (256 * frequency)
         mem32[OSC_CLKDIV] = math.floor(divider) * 65536 + math.floor((divider - math.floor(divider))*256) * 256
 
 # matrix driver
