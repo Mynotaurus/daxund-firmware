@@ -1,6 +1,24 @@
 from sh1122 import SH1122_SPI
 import framebuf
 from machine import Pin, SPI, ADC, freq, Timer, mem32
+logo = bytearray(b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00`\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\xf0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\xfe\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\xff\x00\x00\x00\x01\xff\x80\x0f\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\xff\xc0\x00\x00\x00\xff\x8f\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\xff\xc0\x00\x00\x00?\xc7\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\xff\xc0\x00\x00\x00?\xe3\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\xff\xe0\x00\x00\x00?\xe3\xfe\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\xff\xe0\x00\x00\x00\x1ea\xfe\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x07\xff\xe0\x00\x00\x00\x00\x01\xfe\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x07\xff\xc0\x00\x00\x00?\xe3\xfe\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x07\xff\xc0\x00\x00\x00?\xf3\xfe\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x07\xff\xc0\x00\x00\x00\xff\xfb\xfc\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x07\xff\xc0\x00\x00\x01\xff\xfb\xfc\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x07\xff\xc0\x00\x00\x03\xff\xff\xfc\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x07\xff\xc0\x00\x00\x07\xff?\xfc\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0f\xff\xc0\x01\xc7\xe7\xfc\x0f\xfc\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0f\xff\xc0\x0f\xcf\xef\xf8\x0f\xfc\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00@\x00\x0f\xff\x80\x0f\x9f\xef\xf8\x0f\xf8\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\xc0\x00\x1f\xff\x80\x07?\xcf\xf0\x07\xf8\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\xc0\x00\x1f\xff\x80\x06\x7f\xcf\xf0\x0f\xf8\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0f\xe0\x00\x1f\xff\x80\x04\xff\xdf\xf0\x0f\xf8\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00?\xe0\x00?\xff\x00\x01\xff\xdf\xf0\x0f\xf0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xe0\x00?\xfc\x00\x01\xff\xdf\xf0\x0f\xf0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xe0\x00?\xf8\x00\x00\xff\xdf\xf0\x0f\xf0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00?\xe0\x00\x7f\xe0\x00\x00\xff\xcf\xf0\x1f\xf0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1f\xf0\x00\x7f\x80\x00\x00\xff\xef\xf8\x1f\xf3\xc0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1f\xf0\x00\xff\x00\x00\x00\xff\xe7\xf8\x1f\xe7\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x8f\xf0\x00\xfc\x00\x00\x00?\xf7\xf8?\xff\xff\x80\x00\x00\x00\x00\x00\x00\x00\x00\x0f\xef\xf8\x10\xf8\x00\x00\x00\x03\xf3\xff\x7f\xff\xff\xc0\x00\x00\x07\x80\x00\x00\x00\x00\x1f\xff\xf8<\xe0\x00\x00\x00\x00\x1b\xff\xff\xff\xff\xe0\x00\x07\xff\x80\x00\x00\x00\x00\x7f\xff\xf8~\x00\x00\x00\x00\x00\x01\xff\xfb\xff\xff\xe0\x00\x03\xff\x80\x0f\x00\x00\x00\xff\xff\xf8\xff\x00\x00\x00\x00\x00\x00\x7f\xe3\xfe?\xe0\x00\x01\xff\x8f\xff\x00\x00\x00\xff\x1f\xf9\xff\x00\x00\x00\x00\x00\x00\x0f\xc3\xfc\x1f\xe0\x00\x00\xff\x8f\xfe\x00\x00\x01\xfe\x07\xfd\xff\x80\x00\x00\x00\x00\x00\x01\x03\xf0\x1f\xe0\x00\x00\xff\x87\xfe\x00\xc3\xe1\xfe\x07\xfd\xff\x80\x00\x00\x00\x00\x00\x00\x03\xc0\x1f\xff\xfe\xff\xff\x03\xfe\x07\xcf\xfd\xfc\x03\xfc\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\xfc\x7f\xff\x01\xfe\x7f\x9f\xff\xfc\x03\xfc~\x00\x00\x00\x00\x00\x00\x00\x00\x0f\xff\xff\xfc?\xff\x01\xff\xff\x9f\xff\xfc\x03\xfc<\x00\x00\x00\x00\x00\x00\x00\x00\x7f\xdf\xff\xf8\x1f\xff\x03\xfe\x7f?\xff\xfc\x03\xfe\x10\x00\x00\x00\x00\x00\x00\x00\x01\xff\x9f\xff\xfc\x1f\xff\x03\xfe\x7f\x7f\xff\xfc\x03\xfe\x00\x00\x00\x00\x00\x00\x00\x00\x03\xff\x1f\xf7\xfe?\xff\x03\xfe?\xfd\xff\xfe\x01\xfe0\x00\x00\x00\x00\x00\x00\x00\x03\xfe\x1f\xf3\xfe}\xff\x03\xfc?\xf0\xff\xfe\x01\xffp\x00\x00\x00\x00\x00\x00\x00\x03\xfc\x0f\xf3\xffy\xff\x03\xfc?\xe0\x7f\xfe\x01\xff\xf8\x00\x00\x00\x00\x00\x00\x00\x07\xfc\x0f\xff\xff\xf1\xfe\x03\xfc?\xe0\x7f\xff\x01\xff\xf0\x00\x00\x00\x00\x00\x00\x00\x07\xfc\x1f\xff\xff\xc1\xfe\x03\xfc?\xe0\x7f\xff\x81\xff\xe0\x00\x00\x00\x00\x00\x00\x00\x07\xfc\x1f\xff\x7f\xe1\xfe\x03\xfc?\xe0\x7f\xff\xc3\xff\xc0\x00\x00\x00\x00\x00\x00\x00\x03\xfe\x1f\xfe?\xf1\xfe\x07\xfc?\xe0\x7f\xff\xff\xcf\x80\x00\x00\x00\x00\x00\x00\x00\x01\xff\xff\xfc\x1f\xf0\xff\x07\xfc?\xe0\x7f\xff\xff\xc7\x80\x00\x00\x00\x00\x00\x00\x00\x00\xff\xf8\xf8?\xf8\xff\xbf\xfd\xff\xe0\x7f\xbf\xff\x87\x00\x00\x00\x00\x00\x00\x00\x00\x00\x7f\xf0`\x7f\xfc\x7f\xff\xff\xff\xe0\x7f\x9f\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0f\xc0\x01\xff\xfe\x7f\xf9\xff\xff\xe0\x7f\x8f\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\xf3\xff?\xf0\xff\xbf\xe0\x7f\x808\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0f\xe1\xff\x07\xc0\xfe?\xe0\x7f\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1f\xe0\xff\x80\x00x?\xe0\x7f\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x7f\xc0\xff\xc0\x00`?\xe0\x7f\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x7f\x80\xff\xc0\x00\x00?\xe0\x7f\xc0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\x80\xff\xe0\x00\x00?\xc0?\xc0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\xff\x00\x7f\xe0\x00\x00?\xc0\x1f\xe0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\xff\x00\x7f\xe0\x00\x00?\xc0\x0f\xf0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\xfe\x00\x7f\xe0\x00\x00\x7f\xc0\x0f\xf0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\xfe\x00\x7f\xe0\x00\x00\x7f\xc0\x07\xf8\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x07\xfc\x00\x7f\xe0\x00\x00\x7f\xc0\x07\xfc\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0f\xfc\x00\x7f\xf0\x00\x00\x7f\xc0\x03\xfc\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0f\xf8\x00\x7f\xf0\x00\x00\x7f\x80\x01\xfe\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1f\xf8\x00?\xf0\x00\x00\x7f\x80\x00\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1f\xf0\x00?\xf0\x00\x00\xff\x80\x00\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00?\xf0\x00?\xf0\x00\x00\xff\x80\x00\x7f\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00?\xe0\x00?\xf0\x00\x00\xff\x80\x00?\xc0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x7f\xe0\x00?\xf8\x00\x00\xff\x80\x00?\xc0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xc0\x00\x7f\xf8\x00\x01\xff\x80\x00?\xe0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xc0\x00\x7f\xf8\x00\x01\xff\x80\x00?\xf0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\xff\xc0\x00\xff\xf8\x00\x03\xff\x00\x00\x7f\xf0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03\xff\x80\x00\xff\xf8\x00\x03\xff\x00\x00\xff\xf8\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00')
+# DISPLAY -  RST:3 DC:4 CS:5 SCL:6 SCA:7 - set up first so we can display a loading screen quick
+spi = SPI(0,sck=Pin(6, Pin.OUT), mosi=Pin(7, Pin.OUT))
+dc = Pin(4, Pin.OUT)
+dc.value(0)
+res = Pin(3, Pin.OUT)
+res.value(1)
+cs = Pin(5, Pin.OUT)
+cs.value(1)
+oled = SH1122_SPI(256, 64, spi, dc, res, cs, 4 * 1024 * 1024) #default is 10MHz but it adds too much noise
+
+oled.fill(0)
+logobuf = framebuf.FrameBuffer(logo,184,80,framebuf.MONO_HLSB)
+oled.blit(logobuf,36,24,0)
+
+oled.text("loading...",90,16,1)
+oled.show()
+
 import neopixel
 import time
 import math
@@ -12,23 +30,13 @@ import json
 import os
 import random
 
+print("STATUS: all libraries loaded!")
 def clamp(a,l,h):
     return max(l,min(a,h))
 
 # -- PINOUT --
 
 freq(125_000_000)
-
-# DISPLAY -  RST:3 DC:4 CS:5 SCL:6 SCA:7
-spi = SPI(0,sck=Pin(6, Pin.OUT), mosi=Pin(7, Pin.OUT))
-dc = Pin(4, Pin.OUT)
-dc.value(0)
-res = Pin(3, Pin.OUT)
-res.value(1)
-cs = Pin(5, Pin.OUT)
-cs.value(1)
-oled = SH1122_SPI(256, 64, spi, dc, res, cs, 4 * 1024 * 1024) #default is 10MHz but it adds too much noise
-oled.fill(0)
 
 # SIGNALS - OSC:10 GATE:11 ACC_P:12 ACC_V:13
 osc_pin = Pin(10, Pin.OUT)
@@ -58,6 +66,8 @@ rotary_encoder = RotaryIRQ(pin_num_clk=8,
 
 # RGB - GPIO 27
 np = neopixel.NeoPixel(Pin(27), 16)
+np.fill((0,0,0))
+np.write()
 
 # AUDIO IN - GPIO 28
 audio_in = ADC(Pin(28))
@@ -153,9 +163,7 @@ sequence = {
     "accent_p":[0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
     "accent_v":[0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
     "hold":[0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
-    "tremolo":[0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
-    "gate_length":0.5,
-    "pause":False
+    "tremolo":[0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]
 }
 #function to be run every sequencer tick
 seq_int = { #store all internal variables in a dict to namespace it, and also make it easy to make global
@@ -165,7 +173,9 @@ seq_int = { #store all internal variables in a dict to namespace it, and also ma
     "current_note":0,
     "next_note":0,
     "current_tremolo":0,
-    "shuffle":False
+    "gate_length":0.5,
+    "shuffle":False,
+    "pause":True
 }
 
 def randomise_sequence():
@@ -181,7 +191,7 @@ def sequencer_update(tx):
     seq_substeps = 32
     #we want to run this multiple times per beat
     if(seq_int["t"] % (seq_substeps*2) == 0) or (seq_int["t"] % (seq_substeps*2) == seq_substeps + sequence["swing"]):
-        if(sequence["pause"]):
+        if(seq_int["pause"]):
             gate_pin.high()
             acc_volume_pin.low()
             acc_pitch_pin.low()
@@ -201,11 +211,11 @@ def sequencer_update(tx):
                 acc_pitch_pin.low()
             
             set_oscillator(sequence["frequency"][current_beat])
-            seq_int["gate_time_left"] = math.floor(sequence["gate_length"]*seq_substeps)
+            seq_int["gate_time_left"] = math.floor(seq_int["gate_length"]*seq_substeps)
             if(seq_int["t"] % (seq_substeps*2) == seq_substeps + sequence["swing"]): #set gate length based on swing
-                seq_int["gate_time_left"] = min(math.floor(sequence["gate_length"]*seq_substeps),(seq_substeps-sequence["swing"]-1))
+                seq_int["gate_time_left"] = min(math.floor(seq_int["gate_length"]*seq_substeps),(seq_substeps-sequence["swing"]-1))
             else:
-                seq_int["gate_time_left"] = min(math.floor(sequence["gate_length"]*seq_substeps),(seq_substeps+sequence["swing"]-1))
+                seq_int["gate_time_left"] = min(math.floor(seq_int["gate_length"]*seq_substeps),(seq_substeps+sequence["swing"]-1))
             gate_pin.low()
             
             seq_int["current_tremolo"] = sequence["tremolo"][current_beat]
@@ -259,6 +269,16 @@ def set_tempo():
 def pal1bpp(b):
     return framebuf.FrameBuffer(bytearray([b]),2,1,framebuf.GS4_HMSB)
 
+def pal15_bright(b):
+    pal = bytearray(8)
+    temp = 0
+    for i in range(16):
+        if(i%2==0):
+            temp = clamp(math.ceil(i * b),0,15)
+        else:
+            pal[i >> 1] = temp * 16 + clamp(math.ceil(i * b),0,15)
+    return framebuf.FrameBuffer(pal,16,1,framebuf.GS4_HMSB)
+
 hexsymbols = ["0","1","2","3","4","5","6","7","8","9","a","b","c","d","e","f"]
 def write_num(num,x,y,digits=0,padding=0,pal=15):
     xoff = x
@@ -282,34 +302,58 @@ def write_num(num,x,y,digits=0,padding=0,pal=15):
             
 def load_folder_to_str(filenum):
     temp = ""
-    with open("/"+str(filenum)+".json","r") as file:
+    with open("save/"+str(filenum)+".json","r") as file:
         temp = file.read()
         file.close()
     return temp
 
 def load(filenum,slot):
     global sequence
-    with open("/"+str(filenum)+".json","r") as file:
+    with open("save/"+str(filenum)+".json","r") as file:
         loadobj = json.loads(file.read())
         sequence = json.loads(json.dumps(loadobj[str(slot)]))
-        print(sequence)
         file.close()
     update_sequencer_frequencies()
     set_tempo()
 
 def save(filenum,slot):
     saveobj = {}
-    with open("/"+str(filenum)+".json","r") as file:
+    with open("save/"+str(filenum)+".json","r") as file:
         saveobj = json.loads(file.read())
         file.close()
     saveobj[str(slot)] = json.loads(json.dumps(sequence))
-    with open("/"+str(filenum)+".json","w") as file:
+    with open("save/"+str(filenum)+".json","w") as file:
         file.write(json.dumps(saveobj))
         file.close()
         
+def save_config_entry(entry,val):
+    file = open("save/config.json", "r")
+    saveobj = json.loads(file.read())
+    file.close()
+    saveobj[str(entry)] = val
+    file = open("save/config.json", "w")
+    file.write(json.dumps(saveobj))
+    file.close()
     
 #core1 tasks: display and input handling
 def core1():
+    print("STATUS: core1 booted!")
+    #set up files
+    files = os.listdir()
+    if "save" not in files:
+        os.mkdir("save")
+    for i in range(16):
+        if ("save/"+str(i)+".json") not in files:
+            file = open("save/"+str(i)+".json", "w")
+            file.write("{}")
+            file.close()
+    if ("save/config.json") not in files:
+        file = open("save/config.json", "w")
+        file.write('{"rgb_brightness":1,"rgb_color_palette":0,"screensaver_enabled":false,"current_file_id":-1,"shuffle":false, "gate_length":0.5}')
+        file.close()
+    file = open("save/config.json", "r")
+    configfile = json.loads(file.read())
+    #initialise variables
     t = 0
     last_rot = rotary_encoder.value()
     current_rot = last_rot
@@ -328,17 +372,49 @@ def core1():
     menu_load_timer = 0
     menu_shuffle_timer = 0
     menu_safety_hold_threshold = 30
-    rgb_brightness = 1
-    rgb_color_palette = 0
+    rgb_brightness = configfile["rgb_brightness"]
+    rgb_color_palette = configfile["rgb_color_palette"]
     file_picker_page = 0
-    current_file_id = -1
+    current_file_id = configfile["current_file_id"]
     temp_file_id = -1
     temp_folder = {}
+    screensaver_enabled = configfile["screensaver_enabled"]
+    screensaver_timer = 0
+    seq_int["shuffle"] = configfile["shuffle"]
+    seq_int["gate_length"] = configfile["gate_length"]
+    file.close()
     
     popup_last_used = -99999
     popup_shown = "none"
     
     last_used_note = 48
+    
+    for i in range(45): #fade in logo
+        oled.fill(math.floor(min(i,1)))
+        for j in range(-32,64):
+            oled.line(0,j*8+i,j*8+i,0,math.floor(min(i,3)))
+        oled.blit(logobuf,36,math.floor(24-min((i**0.5)*6,27)),0,pal1bpp(min(i+1,15)))
+        oled.show()
+        for j in range(16):
+            rgb = [(1+math.sin(j/2+i/4))*24 * rgb_brightness * min(1,i/40), 0, (1+math.cos(j/2+i/4))*24 * rgb_brightness * min(1,i/40)]
+            #palettes
+            if(rgb_color_palette == 6):
+                average = (rgb[0]+rgb[1]+rgb[2])/3
+                rgb = [average,average,average]
+            elif(rgb_color_palette < 3):
+                rgb = [rgb[(rgb_color_palette)%3],rgb[(rgb_color_palette+1)%3],rgb[(rgb_color_palette+2)%3]]
+            else:
+                rgb = [
+                    (rgb[(rgb_color_palette)%3] + rgb[(rgb_color_palette+1)%3])/2,
+                    (rgb[(rgb_color_palette+1)%3] + rgb[(rgb_color_palette+2)%3])/2,
+                    (rgb[(rgb_color_palette+2)%3] + rgb[(rgb_color_palette)%3])/2
+                ]
+            rgb = [clamp(math.floor(rgb[0]),0,240),clamp(math.floor(rgb[1]),0,240),clamp(math.floor(rgb[2]),0,240)]
+            np[j] = tuple(rgb)
+        np.write()
+        
+    print("STATUS: system loaded!")
+    seq_int["pause"] = False
     while True:
         #outline: fetch inputs, update state, refresh display
 
@@ -379,14 +455,22 @@ def core1():
         current_mod_buttons = get_button_row(current_buttons,0)
         new_note_buttons = get_button_row(new_buttons,1)*256+get_button_row(new_buttons,2)
         current_note_buttons = get_button_row(current_buttons,1)*256+get_button_row(current_buttons,2)
+        
+        if(screensaver_enabled):
+            if(current_buttons or current_encsw or new_rot):
+                screensaver_timer = 0
+            else:
+                screensaver_timer = min(screensaver_timer+1,1000000) #stop overflows
 
         if(new_mod_buttons & 0b00100000): #play/pause
-            sequence["pause"] = not sequence["pause"]
+            seq_int["pause"] = not seq_int["pause"]
         if(new_mod_buttons & 0b00010000): #menu
             if(file_picker_page>0):
                 file_picker_page = 0
             else:
                 in_menu = not in_menu
+        if(new_mod_buttons & 0b10000000 and current_encsw) or (current_mod_buttons & 0b10000000 and new_encsw): #screenshot
+            print(oled.buffer.hex())
         
         if(file_picker_page>0): #pick file
             if(file_picker_page==1): #set folder
@@ -408,14 +492,17 @@ def core1():
                 elif(new_note_buttons & 0b10):
                     file_picker_page = 0
                     current_file_id = temp_file_id
+                    save_config_entry("current_file_id",current_file_id)
         elif(in_menu):
             released_note_buttons = get_button_row(released_buttons,1)*256+get_button_row(released_buttons,2)
             if(new_note_buttons & 0b10000000_00000000): #adjust gate length
-                sequence["gate_length"] -= 1/16
-                sequence["gate_length"] = max(sequence["gate_length"], 1/16)
+                seq_int["gate_length"] -= 1/16
+                seq_int["gate_length"] = max(seq_int["gate_length"], 1/16)
+                save_config_entry("gate_length",seq_int["gate_length"])
             elif(new_note_buttons & 0b01000000_00000000):
-                sequence["gate_length"] += 1/16
-                sequence["gate_length"] = min(sequence["gate_length"], 1)
+                seq_int["gate_length"] += 1/16
+                seq_int["gate_length"] = min(seq_int["gate_length"], 1)
+                save_config_entry("gate_length",seq_int["gate_length"])
             elif(new_note_buttons & 0b00000100_00000000):
                 file_picker_page = 1
             elif(released_note_buttons & 0b00000001_00000000):
@@ -427,8 +514,14 @@ def core1():
                     rgb_brightness = rgb_brightness * 2
                 if(rgb_brightness >= 2.4):
                     rgb_brightness = 0
+                save_config_entry("rgb_brightness",rgb_brightness)
             elif(new_note_buttons & 0b00000000_01000000): #adjust led palette
                 rgb_color_palette = (rgb_color_palette + 1)%7
+                save_config_entry("rgb_color_palette",rgb_color_palette)
+            elif(new_note_buttons & 0b00000000_00100000): #screensaver
+                screensaver_enabled = not screensaver_enabled
+                save_config_entry("screensaver_enabled", screensaver_enabled)
+                screensaver_timer = 0
             
             if(current_note_buttons & 0b00001000_00000000)  and current_file_id != -1:
                 menu_save_timer += 1
@@ -448,6 +541,7 @@ def core1():
                 menu_shuffle_timer += 1
                 if(menu_shuffle_timer == menu_safety_hold_threshold):
                     seq_int["shuffle"] = not seq_int["shuffle"]
+                    save_config_entry("shuffle", seq_int["shuffle"])
             else:
                 menu_shuffle_timer = 0
             
@@ -470,11 +564,11 @@ def core1():
                 popup_shown = "tempo"
                 sequence["tempo"] = clamp(sequence["tempo"] - new_rot,1,1000)
                 set_tempo()
-            if(current_mod_buttons & 0b10000000): #swing change
+            if(current_mod_buttons & 0b10000000 and not current_encsw): #swing change
                 popup_last_used = t
                 popup_shown = "swing"
                 sequence["swing"] = clamp(sequence["swing"] - new_rot,-24,24)
-            if(current_mod_buttons & 0b00100000 and sequence["pause"]): #pan cursor when paused
+            if(current_mod_buttons & 0b00100000 and seq_int["pause"]): #pan cursor when paused
                 seq_int["t"] = (seq_int["t"]-32*new_rot)%(32*sequence["length"])
             if(new_buttons or released_buttons): #see if the buttons have changed
                 if(new_mod_buttons and current_note_buttons): #punching modifiers while holding a note
@@ -636,14 +730,14 @@ def core1():
             oled.text("note",0,0,15)
             oled.text("len",36,0,15)
             oled.rect(61,5,2,2,15)
-            write_num(sequence["gate_length"], 12, 9, 2)
+            write_num(seq_int["gate_length"], 12, 9, 2)
             oled.hline(1,17,7,12)
             oled.hline(56,17,7,12)
             oled.vline(59,14,7,12)
             oled.hline(8,28,48,5)
             oled.hline(8,29,48,5)
-            oled.hline(8,28,math.floor(48*sequence["gate_length"]),15)
-            oled.hline(8,29,math.floor(48*sequence["gate_length"]),15)
+            oled.hline(8,28,math.floor(48*seq_int["gate_length"]),15)
+            oled.hline(8,29,math.floor(48*seq_int["gate_length"]),15)
             
             #save!
             if(current_file_id > -1):
@@ -696,6 +790,14 @@ def core1():
             oled.text("ette",32,40,15)
             oled.blit(framebuf.FrameBuffer(sprites["font"][chr(97+rgb_color_palette)],16,15,framebuf.MONO_HLSB),44,48,0,pal1bpp(15))
             
+            #screensaver
+            oled.text("scrn",64,32,15)
+            oled.text("savr",64,40,15)
+            if(screensaver_enabled):
+                oled.text("ON!",68,52,15)
+            else:
+                oled.text("off",68,52,2)
+            
             #shuffle
             if(menu_shuffle_timer >= menu_safety_hold_threshold):
                 oled.text("togg",192,32,15)
@@ -738,7 +840,8 @@ def core1():
             oled.vline(224, 0,64,4)
         else:
             oled.fill(0)
-            oled.vline(math.floor(local_t * 256 / sequence["length"]),2,32,1)
+            if not(screensaver_enabled and screensaver_timer == 120): #dont draw the sweeper on the frame we activate screensaver
+                oled.vline(math.floor(local_t * 256 / sequence["length"]),2,32,1)
             for i in range(len(sequence["note"])):
                 if sequence["hold"][i]!=0:
                     oled.rect(i*16+2,0,22,3,1,True)
@@ -762,7 +865,7 @@ def core1():
                         oled.text("x"+str(1+sequence["tremolo"][i]),i*16-2,40+sequence["accent_p"][i]*2-math.floor(sequence["note"][i]/4),15)
             oled.hline(0,44,256,15)
             oled.blit(framebuf.FrameBuffer(sprites["speech_bubble_end"],16,12,framebuf.MONO_HLSB),16,44,-1,pal1bpp(15))
-            if(math.floor(seq_int["t"] / 32)%16==12 or (sequence["pause"] and math.floor(t/5)%16==15)):
+            if(math.floor(seq_int["t"] / 32)%16==12 or (seq_int["pause"] and math.floor(t/5)%16==15)):
                 oled.blit(framebuf.FrameBuffer(sprites["dog"]["blink"],16,12,framebuf.MONO_HLSB),-1,52-math.floor(seq_int["t"] / 128)%2,0,pal1bpp(15))
             else:
                 oled.blit(framebuf.FrameBuffer(sprites["dog"]["neutral"],16,12,framebuf.MONO_HLSB),-1,52-math.floor(seq_int["t"] / 128)%2,0,pal1bpp(15))
@@ -810,7 +913,7 @@ def core1():
         for i in range(16):
             if(sequence["note"][15-i]):
                 #base color
-                rgb = [32+24*math.sin((sequence["note"][15-i]%12)/2), 0, 32+24*math.cos((sequence["note"][15-i]%12)/2)]
+                rgb = [28+24*math.sin((sequence["note"][15-i]%12)/2), 0, 28+24*math.cos((sequence["note"][15-i]%12)/2)]
                 if(sequence["tremolo"][15-i]):
                     rgb[1] = sequence["tremolo"][15-i]*12
                 #brightness for accents
@@ -842,7 +945,21 @@ def core1():
                 np[i] = (np[i][0] + chaser_brightness,np[i][1] + chaser_brightness,np[i][2] + chaser_brightness)
             np.write()
             
-        oled.show()
+        if screensaver_enabled and screensaver_timer == 120:
+            scrn = oled.buffer
+            oled.blit(framebuf.FrameBuffer(scrn,256,64,framebuf.GS4_HMSB), 0,0,-1, pal15_bright(0.25))
+            if(in_menu):
+                oled.rect(0,48,256,16,0,True)
+            else:
+                oled.rect(32,48,224,16,0,True)
+                oled.rect(-1,48,12,16,0,True)
+            oled.text("SCREENSAVER ACTIVE",60,48,12)
+            oled.text("press any key to wake",44,56,12)
+            oled.blit(framebuf.FrameBuffer(sprites["dog"]["blink"],16,12,framebuf.MONO_HLSB),-1,52,-1,pal1bpp(15))
+            oled.text("z",13,48,15)
+            oled.show()
+        if (not screensaver_enabled or screensaver_timer < 120):
+            oled.show()
 
         last_rot = current_rot
         button_history.insert(0,current_buttons)
@@ -850,14 +967,6 @@ def core1():
         t+=1
 
 _thread.start_new_thread(core1, ())
-
-#set up files
-files = os.listdir()
-for i in range(16):
-    if (str(i)+".json") not in files:
-        file = open(str(i)+".json", "w")
-        file.write("{}")
-        file.close()
 
 #core0 tasks: recieving interrupts
 sequence_tick = Timer(freq=256, mode=Timer.PERIODIC, callback=sequencer_update)
