@@ -152,7 +152,7 @@ def update_sequencer_frequencies(): #copy our note id list into the frequency li
             sequence["frequency"][i] = note_to_frequency(sequence["note"][i])
 
 # 2 ^ n/16
-log_16_step = [1.00000,1.04427,1.09051,1.13879,1.18921,1.24186,1.29684,1.35426,1.41421,1.47683,1.54221,1.61049,1.68179,1.75625,1.83401,1.91521]
+log_16_step = [1.00000,1.04427,1.09051,1.13879,1.18921,1.24186,1.29684,1.35426,1.41421,1.47683,1.54221,1.61049,1.68179,1.75625,1.83401,1.91521,2]
 
 sequence = {
     "tempo":120,
@@ -240,8 +240,8 @@ def sequencer_update(tx):
                #f = c + (t-c) * (2^x/16 - 1) to approximate a log going up
                set_oscillator(seq_int["current_note"] + seq_int["note_gap"] * (log_16_step[i] - 1))
             else:
-               #f = c + (t-c) * (2^(16-x)/16 - 1) to approximate a log going down
-               set_oscillator(seq_int["current_note"] - seq_int["note_gap"] * (log_16_step[15-i] - 1))
+               #f = t + (t-c) * (1 - 2^(16-x)/16) to approximate a log going down
+               set_oscillator(seq_int["next_note"] + seq_int["note_gap"] * (1 - log_16_step[16-i]))
     if(seq_int["current_tremolo"]):
         if(seq_int["gate_time_left"]>0):
             if seq_int["gate_time_left"] % (24 // (2+seq_int["current_tremolo"]*2)) == 0:
