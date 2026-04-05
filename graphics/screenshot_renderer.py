@@ -9,6 +9,8 @@ while True:
     new = conn.read()
     if(new.isalnum()):
         response += new.decode()
+    else:
+        response = ""
     if validscr.match(response):
         print("screenshot detected!")
         hexdump = validscr.match(response).group()
@@ -23,7 +25,7 @@ while True:
             bytestr += remap_table[hexdump[i]]
         im = Image.frombytes("L",(256,64),bytearray.fromhex(bytestr))
 
-        im = im.crop((-4,-4,264,72))
+        im = im.crop((-4,-4,260,68))
         im = im.resize((1048,288), Image.Resampling.NEAREST)
         im.show()
         response = ""
