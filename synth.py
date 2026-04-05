@@ -707,7 +707,7 @@ def core1():
                                 sequence["note"][15-i] = 0
                             sequence_changed = True
                             update_sequencer_frequencies()
-            if(current_encsw and new_rot):
+            if(current_encsw and new_rot and not current_mod_buttons): #move all notes as one
                 note_clip = False
                 for i in range(16):
                     if ((sequence["note"][15-i] <= 1 and new_rot>0) or (sequence["note"][15-i] >=119 and new_rot<0)) and sequence["note"][15-i] != 0:
@@ -721,9 +721,8 @@ def core1():
                     update_sequencer_frequencies()
                     sequence_changed = True
             elif(new_rot and current_buttons):
-                note_buttons = get_button_row(current_buttons,1)*256+get_button_row(current_buttons,2)
                 for i in range(16):
-                    if(note_buttons & 1<<i):
+                    if(current_note_buttons & 1<<i):
                         if(sequence["note"][15-i] == 0):
                             sequence["note"][15-i] = last_used_note
                         sequence["note"][15-i] -= new_rot
@@ -923,6 +922,8 @@ def core1():
             for i in range(len(sequence["note"])):
                 if sequence["hold"][i]!=0:
                     oled.rect(i*16+2,0,22,3,1,True)
+                    if i==15:
+                        oled.rect(-14,0,22,3,1,True)
                 if(i%2==0):
                     oled.rect(i*16,1,10+math.ceil(sequence["swing"]/2),4,1, True)
                 else:
@@ -940,7 +941,11 @@ def core1():
                     if sequence["tremolo"][i]!=0:
                         oled.text("x"+str(1+sequence["tremolo"][i]),i*16-2,40+sequence["accent_p"][i]*2-math.floor(sequence["note"][i]/4),15)
             oled.hline(0,44,256,15)
-            oled.blit(framebuf.FrameBuffer(sprites["speech_bubble_end"],16,12,framebuf.MONO_HLSB),16,44,-1,pal1bpp(15))
+            if(seq_int["pause"]):
+                oled.rect(18,50,4,12,12,True)
+                oled.rect(24,50,4,12,12,True)
+            else:
+                oled.blit(framebuf.FrameBuffer(sprites["speech_bubble_end"],16,12,framebuf.MONO_HLSB),16,44,-1,pal1bpp(15))
             if(math.floor(seq_int["t"] / 32)%16==12 or (seq_int["pause"] and math.floor(t/5)%16==15)):
                 oled.blit(framebuf.FrameBuffer(sprites["dog"]["blink"],16,12,framebuf.MONO_HLSB),-1,52-math.floor(seq_int["t"] / 128)%2,0,pal1bpp(15))
             else:
