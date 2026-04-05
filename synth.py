@@ -399,6 +399,8 @@ def core1():
     menu_save_timer = 0
     menu_load_timer = 0
     menu_shuffle_timer = 0
+    tempo_taps = []
+    swing_taps = []
     menu_safety_hold_threshold = 30
     seq_int["rgb_color_palette"] = configfile["rgb_color_palette"]
     file_picker_page = 0
@@ -598,12 +600,35 @@ def core1():
             if(current_mod_buttons & 0b01000000): #tempo change
                 popup_last_used = t
                 popup_shown = "tempo"
-                sequence["tempo"] = clamp(sequence["tempo"] - new_rot,1,1000)
-                set_tempo()
+                if new_rot:
+                    if current_encsw: #enable fractional bpm adjustment
+                        sequence["tempo"] = clamp(math.floor(sequence["tempo"]*20 - new_rot)/20,1,1000)
+                    else:
+                        sequence["tempo"] = clamp(math.floor(sequence["tempo"]) - new_rot,1,1000)
+                    tempo_taps = []
+                    set_tempo()
+            if(new_mod_buttons & 0b01000000 and not new_rot): #if tempo is tapped
+                tempo_taps.append(time.ticks_ms())
+                if(len(tempo_taps)>4):
+                    if(time.ticks_diff(tempo_taps[3],tempo_taps[0])<5000):
+                       delta_ms = time.ticks_diff(tempo_taps[3],tempo_taps[0])/3
+                       sequence["tempo"] = clamp(math.floor((60000 / delta_ms)/0.01)*0.01,1,1000)
+                       set_tempo()
+                    tempo_taps.pop(0)
             if(current_mod_buttons & 0b10000000 and not current_encsw): #swing change
                 popup_last_used = t
                 popup_shown = "swing"
-                sequence["swing"] = clamp(sequence["swing"] - new_rot,-24,24)
+                if new_rot:
+                    sequence["swing"] = clamp(sequence["swing"] - new_rot,-24,24)
+            if(new_mod_buttons & 0b10000000 and not new_rot): #if swing is tapped
+                swing_taps.append(time.ticks_ms())
+                if(len(swing_taps)>=4 and len(swing_taps)%2==1):
+                    if(time.ticks_diff(swing_taps[4],swing_taps[0])<5000):
+                       delta_ms = time.ticks_diff(swing_taps[4],swing_taps[0]) #time of two note pairs
+                       swing_val = (time.ticks_diff(swing_taps[1],swing_taps[0]) + time.ticks_diff(swing_taps[3],swing_taps[2])) / delta_ms #percentage length between 0 and 1 note
+                       sequence["swing"] = clamp(math.floor((32 * swing_val - 16)),-24,24)
+                    swing_taps.pop(0)
+                    swing_taps.pop(0)
             if(current_mod_buttons & 0b00100000 and seq_int["pause"]): #pan cursor when paused
                 seq_int["t"] = (seq_int["t"]-32*new_rot)%(32*sequence["length"])
             if(new_buttons or released_buttons): #see if the buttons have changed
@@ -932,9 +957,19 @@ def core1():
                     oled.blit(framebuf.FrameBuffer(sprites["turn_knob"],40,4,framebuf.MONO_HLSB),44,42,0,pal1bpp(10))
                     write_num(sequence["tempo"],32,48,0,3,15)
                     oled.text("bpm", 67, 56, 15)
+                    if not sequence["tempo"] == int(sequence["tempo"]):
+                        if(sequence["tempo"]%1 >= 0.1):
+                            oled.text(str(math.floor((sequence["tempo"]%1)*100)), 67, 48, 14)
+                        else:
+                            oled.text("0"+str(math.floor((sequence["tempo"]%1)*100)), 67, 48, 14)
             else:
                     write_num(sequence["tempo"],32,48,0,3,6)
                     oled.text("bpm", 67, 56, 6)
+                    if not sequence["tempo"] == int(sequence["tempo"]):
+                        if(sequence["tempo"]%1 >= 0.1):
+                            oled.text(str(math.floor((sequence["tempo"]%1)*100)), 67, 48, 5)
+                        else:
+                            oled.text("0"+str(math.floor((sequence["tempo"]%1)*100)), 67, 48, 5)
             if(popup_shown == "swing" and t == popup_last_used):
                 oled.rect(94,26,64,48,0,True)
                 oled.rect(94,26,64,48,15)
