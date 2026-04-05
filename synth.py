@@ -16,7 +16,7 @@ oled.fill(0)
 logobuf = framebuf.FrameBuffer(logo,184,80,framebuf.MONO_HLSB)
 oled.blit(logobuf,36,24,0)
 
-oled.text("loading...",90,16,1)
+oled.text("loading...",90,8,1)
 oled.show()
 
 import neopixel
@@ -175,7 +175,8 @@ seq_int = { #store all internal variables in a dict to namespace it, and also ma
     "current_tremolo":0,
     "gate_length":0.5,
     "shuffle":False,
-    "pause":True
+    "pause":True,
+    "rgb_brightness":-1
 }
 
 def randomise_sequence():
@@ -265,9 +266,13 @@ sequence_tick = Timer()
 def set_tempo():
     sequence_tick.deinit()
     sequence_tick.init(freq=sequence["tempo"]/15*32, mode=Timer.PERIODIC, callback=sequencer_update)
-
+    
+pal1cache = {} #cache these when generated to save time later
 def pal1bpp(b):
-    return framebuf.FrameBuffer(bytearray([b]),2,1,framebuf.GS4_HMSB)
+    if b in pal1cache.keys():
+        return pal1cache[b]
+    pal1cache[b] = framebuf.FrameBuffer(bytearray([b]),2,1,framebuf.GS4_HMSB)
+    return pal1cache[b]
 
 def pal15_bright(b):
     pal = bytearray(8)
@@ -282,13 +287,15 @@ def pal15_bright(b):
 hexsymbols = ["0","1","2","3","4","5","6","7","8","9","a","b","c","d","e","f"]
 def write_num(num,x,y,digits=0,padding=0,pal=15):
     xoff = x
-    snum = str(num+0.00017)
-    if(len(snum.split(".")[0])<padding):
-        xoff += (padding - len(snum.split(".")[0])) * 12
-    if(digits==0):
-        snum = snum.split(".")[0]
-    else:
+    snum = str(math.floor(num))
+    if(digits!=0):
+        snum = str(num+0.00017)
+        if(len(snum.split(".")[0])<padding):
+            xoff += (padding - len(snum.split(".")[0])) * 12
         snum = snum.split(".")[0] + "." + snum.split(".")[1][:digits]
+    else:
+        if(len(snum)<padding):
+            xoff += (padding - len(snum.split(".")[0])) * 12
     for i in range(len(snum)):
         if(snum[i] == "."):
             oled.blit(framebuf.FrameBuffer(sprites["font"][snum[i]],8,15,framebuf.MONO_HLSB),xoff-1,y,0,pal1bpp(pal))
@@ -327,32 +334,53 @@ def save(filenum,slot):
         file.close()
         
 def save_config_entry(entry,val):
-    file = open("save/config.json", "r")
-    saveobj = json.loads(file.read())
-    file.close()
+    saveobj = 0
+    with open("save/config.json", "r") as file:
+        saveobj = json.loads(file.read())
+    if not saveobj:
+        print("ERROR: did not save config")
+        return #break if file op failed
     saveobj[str(entry)] = val
-    file = open("save/config.json", "w")
-    file.write(json.dumps(saveobj))
-    file.close()
-    
+    with open("save/config.json", "w") as file:
+        file.write(json.dumps(saveobj))
+    print("FILE: saved "+entry+" as "+str(val))
+
+
 #core1 tasks: display and input handling
 def core1():
     print("STATUS: core1 booted!")
     #set up files
     files = os.listdir()
+    oled.rect(0,0,256,16,0,True)
+    oled.text("core1 loaded...",68,8,1)
+    oled.show()
     if "save" not in files:
         os.mkdir("save")
+    
+    oled.rect(0,0,256,16,0,True)
+    oled.text("save dir ok....",68,8,1)
+    oled.show()
     for i in range(16):
         if ("save/"+str(i)+".json") not in files:
-            file = open("save/"+str(i)+".json", "w")
-            file.write("{}")
-            file.close()
+            with open("save/"+str(i)+".json", "w") as file:
+                file.write("{}")
+        oled.rect(0,0,256,16,0,True)
+        oled.text("savefile"+str(i)+"ok..",68,8,1)
+        oled.show()
+    
+    oled.rect(0,0,256,16,0,True)
+    oled.text("savefiles ok...",68,8,1)
+    oled.show()
+    confstr = '{"rgb_brightness":1,"rgb_color_palette":0,"screensaver_enabled":false,"current_file_id":-1,"shuffle":false, "gate_length":0.5}'
     if ("save/config.json") not in files:
-        file = open("save/config.json", "w")
-        file.write('{"rgb_brightness":1,"rgb_color_palette":0,"screensaver_enabled":false,"current_file_id":-1,"shuffle":false, "gate_length":0.5}')
-        file.close()
-    file = open("save/config.json", "r")
-    configfile = json.loads(file.read())
+        with open("save/config.json", "w") as file:
+            file.write(confstr)
+    else:
+        with open("save/config.json", "r") as file:
+            confstr = file.read()
+    configfile = json.loads(confstr)
+    oled.rect(0,0,256,16,0,True)
+    oled.text("config loaded..",68,8,1)
     #initialise variables
     t = 0
     last_rot = rotary_encoder.value()
@@ -372,49 +400,54 @@ def core1():
     menu_load_timer = 0
     menu_shuffle_timer = 0
     menu_safety_hold_threshold = 30
-    rgb_brightness = configfile["rgb_brightness"]
-    rgb_color_palette = configfile["rgb_color_palette"]
+    seq_int["rgb_color_palette"] = configfile["rgb_color_palette"]
     file_picker_page = 0
     current_file_id = configfile["current_file_id"]
     temp_file_id = -1
     temp_folder = {}
+    sequence_changed = False
     screensaver_enabled = configfile["screensaver_enabled"]
     screensaver_timer = 0
     seq_int["shuffle"] = configfile["shuffle"]
     seq_int["gate_length"] = configfile["gate_length"]
-    file.close()
     
     popup_last_used = -99999
     popup_shown = "none"
     
     last_used_note = 48
     
-    for i in range(45): #fade in logo
+    i = 0
+    while i < 35: #fade in logo
         oled.fill(math.floor(min(i,1)))
         for j in range(-32,64):
             oled.line(0,j*8+i,j*8+i,0,math.floor(min(i,3)))
         oled.blit(logobuf,36,math.floor(24-min((i**0.5)*6,27)),0,pal1bpp(min(i+1,15)))
         oled.show()
         for j in range(16):
-            rgb = [(1+math.sin(j/2+i/4))*24 * rgb_brightness * min(1,i/40), 0, (1+math.cos(j/2+i/4))*24 * rgb_brightness * min(1,i/40)]
+            rgb = [(1+math.sin(j/2+i/4))*24 * configfile["rgb_brightness"] * min(1,i/40), 0, (1+math.cos(j/2+i/4))*24 * configfile["rgb_brightness"] * min(1,i/40)]
             #palettes
-            if(rgb_color_palette == 6):
+            if(seq_int["rgb_color_palette"] == 6):
                 average = (rgb[0]+rgb[1]+rgb[2])/3
                 rgb = [average,average,average]
-            elif(rgb_color_palette < 3):
-                rgb = [rgb[(rgb_color_palette)%3],rgb[(rgb_color_palette+1)%3],rgb[(rgb_color_palette+2)%3]]
+            elif(seq_int["rgb_color_palette"] < 3):
+                rgb = [rgb[(seq_int["rgb_color_palette"])%3],rgb[(seq_int["rgb_color_palette"]+1)%3],rgb[(seq_int["rgb_color_palette"]+2)%3]]
             else:
                 rgb = [
-                    (rgb[(rgb_color_palette)%3] + rgb[(rgb_color_palette+1)%3])/2,
-                    (rgb[(rgb_color_palette+1)%3] + rgb[(rgb_color_palette+2)%3])/2,
-                    (rgb[(rgb_color_palette+2)%3] + rgb[(rgb_color_palette)%3])/2
+                    (rgb[(seq_int["rgb_color_palette"])%3] + rgb[(seq_int["rgb_color_palette"]+1)%3])/2,
+                    (rgb[(seq_int["rgb_color_palette"]+1)%3] + rgb[(seq_int["rgb_color_palette"]+2)%3])/2,
+                    (rgb[(seq_int["rgb_color_palette"]+2)%3] + rgb[(seq_int["rgb_color_palette"])%3])/2
                 ]
             rgb = [clamp(math.floor(rgb[0]),0,240),clamp(math.floor(rgb[1]),0,240),clamp(math.floor(rgb[2]),0,240)]
             np[j] = tuple(rgb)
         np.write()
+        i+=1
+        if(get_button_row(matrix_sm.get(),0)):
+            i+=2
         
     print("STATUS: system loaded!")
+    seq_int["rgb_brightness"] = configfile["rgb_brightness"] #set this here to signal to core0 we are starting up
     seq_int["pause"] = False
+    oled.fill(0)
     while True:
         #outline: fetch inputs, update state, refresh display
 
@@ -508,16 +541,16 @@ def core1():
             elif(released_note_buttons & 0b00000001_00000000):
                 in_menu = False
             elif(new_note_buttons & 0b00000000_10000000): #adjust led brightness
-                if(rgb_brightness == 0):
-                    rgb_brightness = 0.125
+                if(seq_int["rgb_brightness"] == 0):
+                    seq_int["rgb_brightness"] = 0.125
                 else:
-                    rgb_brightness = rgb_brightness * 2
-                if(rgb_brightness >= 2.4):
-                    rgb_brightness = 0
-                save_config_entry("rgb_brightness",rgb_brightness)
+                    seq_int["rgb_brightness"] = seq_int["rgb_brightness"] * 2
+                if(seq_int["rgb_brightness"] >= 2.4):
+                    seq_int["rgb_brightness"] = 0
+                save_config_entry("rgb_brightness",seq_int["rgb_brightness"])
             elif(new_note_buttons & 0b00000000_01000000): #adjust led palette
-                rgb_color_palette = (rgb_color_palette + 1)%7
-                save_config_entry("rgb_color_palette",rgb_color_palette)
+                seq_int["rgb_color_palette"] = (seq_int["rgb_color_palette"] + 1)%7
+                save_config_entry("rgb_color_palette",seq_int["rgb_color_palette"])
             elif(new_note_buttons & 0b00000000_00100000): #screensaver
                 screensaver_enabled = not screensaver_enabled
                 save_config_entry("screensaver_enabled", screensaver_enabled)
@@ -527,12 +560,14 @@ def core1():
                 menu_save_timer += 1
                 if(menu_save_timer == menu_safety_hold_threshold):
                     save(current_file_id >> 4,current_file_id%16)
+                    sequence_changed = False
             else:
                 menu_save_timer = 0
             if(current_note_buttons & 0b00000010_00000000) and current_file_id != -1:
                 menu_load_timer += 1
                 if(menu_load_timer == menu_safety_hold_threshold):
                     load(current_file_id >> 4,current_file_id%16)
+                    sequence_changed = False
             else:
                 menu_load_timer = 0
             
@@ -549,6 +584,7 @@ def core1():
                 #clear sequence
                 menu_clear_timer += 1
                 if(menu_clear_timer == menu_safety_hold_threshold):
+                    sequence_changed = True
                     for i in range(sequence["length"]):
                         sequence["note"][i] = 0
                         sequence["frequency"][i] = 0
@@ -579,6 +615,7 @@ def core1():
                                     sequence["accent_v"][15-i] = 1
                                 else:
                                     sequence["accent_v"][15-i] = 0
+                                sequence_changed = True
                     if(new_mod_buttons & 0b00000100): #button 6
                         for i in range(16):
                             if(current_note_buttons & 1<<i): #if holding button
@@ -586,6 +623,7 @@ def core1():
                                     sequence["accent_p"][15-i] = 1
                                 else:
                                     sequence["accent_p"][15-i] = 0
+                                sequence_changed = True
                     if(new_mod_buttons & 0b00000010): #button 7
                         for i in range(16):
                             if(current_note_buttons & 1<<i): #if holding button
@@ -593,10 +631,12 @@ def core1():
                                     sequence["hold"][15-i] = 1
                                 else:
                                     sequence["hold"][15-i] = 0
+                                sequence_changed = True
                     if(new_mod_buttons & 0b00000001): #button 8
                         for i in range(16):
                             if(current_note_buttons & 1<<i): #if holding button
                                 sequence["tremolo"][15-i] = (sequence["tremolo"][15-i] + 1) % 4
+                                sequence_changed = True
                 elif (new_note_buttons and current_mod_buttons): #punching notes while holding a modifier
                     if(current_mod_buttons & 0b00001000): #button 5
                         for i in range(16):
@@ -605,6 +645,7 @@ def core1():
                                     sequence["accent_v"][15-i] = 1
                                 else:
                                     sequence["accent_v"][15-i] = 0
+                                sequence_changed = True
                     if(current_mod_buttons & 0b00000100): #button 6
                         for i in range(16):
                             if(new_note_buttons & 1<<i): #if new button
@@ -612,6 +653,7 @@ def core1():
                                     sequence["accent_p"][15-i] = 1
                                 else:
                                     sequence["accent_p"][15-i] = 0
+                                sequence_changed = True
                     if(current_mod_buttons & 0b00000010): #button 7
                         for i in range(16):
                             if(new_note_buttons & 1<<i): #if new button
@@ -619,10 +661,12 @@ def core1():
                                     sequence["hold"][15-i] = 1
                                 else:
                                     sequence["hold"][15-i] = 0
+                                sequence_changed = True
                     if(current_mod_buttons & 0b00000001): #button 8
                         for i in range(16):
                             if(new_note_buttons & 1<<i): #if new button
                                 sequence["tremolo"][15-i] = (sequence["tremolo"][15-i] + 1) % 4
+                                sequence_changed = True
                 elif(not current_mod_buttons): #toggle notes
                     released_note_buttons = get_button_row(released_buttons,1)*256+get_button_row(released_buttons,2)
                     held_note_buttons = get_button_row(held_buttons,1)*256+get_button_row(held_buttons,2)
@@ -632,6 +676,7 @@ def core1():
                                 sequence["note"][15-i] = last_used_note
                             else:
                                 sequence["note"][15-i] = 0
+                            sequence_changed = True
                             update_sequencer_frequencies()
             if(current_encsw and new_rot):
                 note_clip = False
@@ -645,6 +690,7 @@ def core1():
                     last_used_note -= new_rot
                     last_used_note = max(last_used_note,1)
                     update_sequencer_frequencies()
+                    sequence_changed = True
             elif(new_rot and current_buttons):
                 note_buttons = get_button_row(current_buttons,1)*256+get_button_row(current_buttons,2)
                 for i in range(16):
@@ -655,6 +701,7 @@ def core1():
                         sequence["note"][15-i] = max(sequence["note"][15-i],1)
                         sequence["note"][15-i] = min(sequence["note"][15-i],119)
                         last_used_note = sequence["note"][15-i]
+                        sequence_changed = True
                         update_sequencer_frequencies()
             elif(new_rot):
                 last_used_note -= new_rot
@@ -747,27 +794,28 @@ def core1():
                 oled.blit(framebuf.FrameBuffer(sprites["font"][hexsymbols[current_file_id%16]],16,15,framebuf.MONO_HLSB),188,0,0,pal1bpp(15))
             else:
                 oled.text("NO FILE", 150, 3, 15)
-            
+            if(sequence_changed):
+                oled.blit(framebuf.FrameBuffer(sprites["unsaved"],32,4,framebuf.MONO_HLSB),162,16,0,pal1bpp(7))
             if(current_file_id==-1):
-                oled.text("save",128,21,2)
+                oled.text("save",128,22,2)
             elif(menu_save_timer >= menu_safety_hold_threshold):
-                oled.text("OK!",128+4,21,15)
+                oled.text("OK!",128+4,22,15)
             else:
-                oled.text("save",128,21,15)
+                oled.text("save",128,22,15)
             if(menu_save_timer > 0 and menu_save_timer < menu_safety_hold_threshold):
                 perc = menu_save_timer / menu_safety_hold_threshold
                 oled.rect(128,24,math.floor(32*perc),4,15,True)
             
             #pick!
-            oled.text("set",165,21,15)
+            oled.text("set",165,22,15)
             
             #load!
             if(current_file_id==-1):
-                oled.text("load",192,21,2)
+                oled.text("load",192,22,2)
             elif(menu_load_timer >= menu_safety_hold_threshold):
-                oled.text("OK!",192+4,21,15)
+                oled.text("OK!",192+4,22,15)
             else:
-                oled.text("load",192,21,15)
+                oled.text("load",192,22,15)
             if(menu_load_timer > 0 and menu_load_timer < menu_safety_hold_threshold):
                 perc = menu_load_timer / menu_safety_hold_threshold
                 oled.rect(192,24,math.floor(32*perc),4,15,True)
@@ -780,7 +828,7 @@ def core1():
             oled.text("ness",-1,57,15)
             #0.125, 0.25, 0.5, 1, 2
             for i in range(5):
-                if(rgb_brightness*8 >= (1 << i)):
+                if(seq_int["rgb_brightness"]*8 >= (1 << i)):
                     oled.rect(i*6,42-2*i,5,5+2*i,15,True)
                 else:
                     oled.rect(i*6,42-2*i,5,5+2*i,5,False)
@@ -788,7 +836,7 @@ def core1():
             #led color
             oled.text("pal",36,32,15)
             oled.text("ette",32,40,15)
-            oled.blit(framebuf.FrameBuffer(sprites["font"][chr(97+rgb_color_palette)],16,15,framebuf.MONO_HLSB),44,48,0,pal1bpp(15))
+            oled.blit(framebuf.FrameBuffer(sprites["font"][chr(97+seq_int["rgb_color_palette"])],16,15,framebuf.MONO_HLSB),44,48,0,pal1bpp(15))
             
             #screensaver
             oled.text("scrn",64,32,15)
@@ -803,12 +851,13 @@ def core1():
                 oled.text("togg",192,32,15)
                 oled.text("led!",192,40,15)
             else:
-                oled.text("shuf",192,34,15)
-                oled.text("fle",192,42,15)
-                oled.text("mode",192,50,15)
+                oled.text("shfl",192,34,15)
+                
                 if(seq_int["shuffle"]):
+                    oled.blit(framebuf.FrameBuffer(sprites["shuffle"],24,15,framebuf.MONO_HLSB),196,41,0,pal1bpp(15))
                     oled.text("ON!",196,57,15)
                 else:
+                    oled.blit(framebuf.FrameBuffer(sprites["shuffle"],24,15,framebuf.MONO_HLSB),196,41,0,pal1bpp(8))
                     oled.text("OFF",196,57,2)
             if(menu_shuffle_timer > 0 and menu_shuffle_timer < menu_safety_hold_threshold):
                 perc = menu_shuffle_timer / menu_safety_hold_threshold
@@ -846,17 +895,15 @@ def core1():
                 if sequence["hold"][i]!=0:
                     oled.rect(i*16+2,0,22,3,1,True)
                 if(i%2==0):
-                    oled.rect(i*16,1,10+math.ceil(sequence["swing"]/2),4,1,True)
+                    oled.rect(i*16,1,10+math.ceil(sequence["swing"]/2),4,1, True)
                 else:
-                    oled.rect(i*16+math.ceil(sequence["swing"]/2),1,10-math.ceil(sequence["swing"]/2),4,1,True)
+                    oled.rect(i*16+math.ceil(sequence["swing"]/2),1,10-math.ceil(sequence["swing"]/2),4,1, True)
             for i in range(len(sequence["note"])):
                 if sequence["note"][i]!=0:
                     letter = frequency_letters[sequence["note"][i]%12]
-                    templet = framebuf.FrameBuffer(sprites["font"][letter[0]],16,15,framebuf.MONO_HLSB)
-                    oled.blit(templet,i*16,24-math.floor(sequence["note"][i]/4),0,pal1bpp(15))
+                    oled.blit(framebuf.FrameBuffer(sprites["font"][letter[0]],16,15,framebuf.MONO_HLSB),i*16,24-math.floor(sequence["note"][i]/4),0,pal1bpp(15))
                     if letter[1]=="#":
-                        templet = framebuf.FrameBuffer(bytearray(b"\x50\xF8\x50\xF8\x50"),8,5,framebuf.MONO_HLSB)
-                        oled.blit(templet,i*16+10,24-math.floor(sequence["note"][i]/4),0,pal1bpp(15))
+                        oled.blit(framebuf.FrameBuffer(bytearray(b"\x50\xF8\x50\xF8\x50"),8,5,framebuf.MONO_HLSB),i*16+10,24-math.floor(sequence["note"][i]/4),0,pal1bpp(15))
                     if sequence["accent_v"][i]!=0:
                         oled.blit(framebuf.FrameBuffer(sprites["burst"],16,6,framebuf.MONO_HLSB),i*16,17-math.floor(sequence["note"][i]/4),0,pal1bpp(15))
                     if sequence["accent_p"][i]!=0:
@@ -871,25 +918,42 @@ def core1():
                 oled.blit(framebuf.FrameBuffer(sprites["dog"]["neutral"],16,12,framebuf.MONO_HLSB),-1,52-math.floor(seq_int["t"] / 128)%2,0,pal1bpp(15))
                 oled.vline(9,56-math.floor(seq_int["t"] / 128)%2,2,6)
             oled.hline(0,63,8,15)
-            write_num(sequence["tempo"],32,48,0,3,6)
-            oled.text("bpm", 68, 56, 6)
-                       
+            
             letter = frequency_letters[last_used_note%12]
             oled.blit(framebuf.FrameBuffer(sprites["font"][letter[0]],16,15,framebuf.MONO_HLSB),233,48,0,pal1bpp(6))
             if letter[1]=="#":
                 oled.blit(framebuf.FrameBuffer(bytearray(b"\x50\xF8\x50\xF8\x50"),8,5,framebuf.MONO_HLSB),242,48,0,pal1bpp(6))
             oled.text(str(math.floor((last_used_note+3)/12)-1),242,56,6)
-        if(t == popup_last_used):
-            yoff = 18
-            oled.rect(30,yoff-2,200,52,2,True)
-            oled.rect(32,yoff,196,48,0,True)
-            if(popup_shown == "tempo"):
-                oled.text("Tempo:", 32, yoff+2, 12)
-                write_num(sequence["tempo"], 32, yoff + 16, 0, 3)
-            if(popup_shown == "swing"):
-                oled.text("Swing:", 32, yoff+2, 12)
-                write_num(sequence["swing"], 32, yoff + 16, 0, 2)
-                
+            
+            if(popup_shown == "tempo" and t == popup_last_used):
+                    oled.rect(30,26,64,48,0,True)
+                    oled.rect(30,26,64,48,15)
+                    oled.blit(framebuf.FrameBuffer(sprites["tempo"],48,15,framebuf.MONO_HLSB),40,28,0,pal1bpp(15))
+                    oled.blit(framebuf.FrameBuffer(sprites["turn_knob"],40,4,framebuf.MONO_HLSB),44,42,0,pal1bpp(10))
+                    write_num(sequence["tempo"],32,48,0,3,15)
+                    oled.text("bpm", 67, 56, 15)
+            else:
+                    write_num(sequence["tempo"],32,48,0,3,6)
+                    oled.text("bpm", 67, 56, 6)
+            if(popup_shown == "swing" and t == popup_last_used):
+                oled.rect(94,26,64,48,0,True)
+                oled.rect(94,26,64,48,15)
+                oled.blit(framebuf.FrameBuffer(sprites["swing"],48,15,framebuf.MONO_HLSB),107,28,0,pal1bpp(15))
+                oled.blit(framebuf.FrameBuffer(sprites["turn_knob"],40,4,framebuf.MONO_HLSB),107,42,0,pal1bpp(10))
+                write_num(32+sequence["swing"],100,48,0,2,15)
+                oled.line(128,48,122,64,15)
+                write_num(32-sequence["swing"],130,48,0,2,15)
+            else:
+                write_num(32+sequence["swing"],100,48,0,2,6)
+                oled.line(128,48,122,64,6)
+                write_num(32-sequence["swing"],130,48,0,2,6)
+            if(sequence_changed):
+                oled.blit(framebuf.FrameBuffer(sprites["unsaved"],32,4,framebuf.MONO_HLSB),224,39,0,pal1bpp(3))
+            if(seq_int["shuffle"]):
+                if(local_t>15.5 or local_t<0.5):
+                    oled.blit(framebuf.FrameBuffer(sprites["shuffle"],24,15,framebuf.MONO_HLSB),196,48,0,pal1bpp(12))
+                else:
+                    oled.blit(framebuf.FrameBuffer(sprites["shuffle"],24,15,framebuf.MONO_HLSB),196,48,0,pal1bpp(9))
         #for i in range(24):
         #    if(last_buttons & (1 << i)):
         #        oled.fill_rect((24-i)*3, 28+(i%3)*9, 8, 8,6)
@@ -909,42 +973,7 @@ def core1():
         #    oled.fill_rect(99, 28, 6, 4, 6)
         #else:
         #    oled.fill_rect(99, 28, 6, 4, 2)
-        
-        for i in range(16):
-            if(sequence["note"][15-i]):
-                #base color
-                rgb = [28+24*math.sin((sequence["note"][15-i]%12)/2), 0, 28+24*math.cos((sequence["note"][15-i]%12)/2)]
-                if(sequence["tremolo"][15-i]):
-                    rgb[1] = sequence["tremolo"][15-i]*12
-                #brightness for accents
-                if(sequence["accent_v"][15-i]):
-                    rgb = [rgb[0]*1.2,rgb[1]*1.2,rgb[2]*1.2]
-                if(sequence["accent_p"][15-i]):
-                    rgb = [rgb[0]*1.1,rgb[1]*1.1,rgb[2]*1.1]
-                rgb = [rgb[0] * rgb_brightness, rgb[1] * rgb_brightness, rgb[2] * rgb_brightness]
-                #palettes
-                if(rgb_color_palette == 6):
-                    average = (rgb[0]+rgb[1]+rgb[2])/3
-                    rgb = [average,average,average]
-                elif(rgb_color_palette < 3):
-                    rgb = [rgb[(rgb_color_palette)%3],rgb[(rgb_color_palette+1)%3],rgb[(rgb_color_palette+2)%3]]
-                else:
-                    rgb = [
-                        (rgb[(rgb_color_palette)%3] + rgb[(rgb_color_palette+1)%3])/2,
-                        (rgb[(rgb_color_palette+1)%3] + rgb[(rgb_color_palette+2)%3])/2,
-                        (rgb[(rgb_color_palette+2)%3] + rgb[(rgb_color_palette)%3])/2
-                    ]                                      
-                #normalisation yayy
-                rgb = [clamp(math.floor(rgb[0]),0,240),clamp(math.floor(rgb[1]),0,240),clamp(math.floor(rgb[2]),0,240)]
-                np[i] = tuple(rgb)                
-            else:
-                np[i] = (0,0,0)
-            
-            if(15-i == math.floor(local_t) and rgb_brightness > 0):
-                chaser_brightness = clamp(math.floor(6*rgb_brightness),1,15)
-                np[i] = (np[i][0] + chaser_brightness,np[i][1] + chaser_brightness,np[i][2] + chaser_brightness)
-            np.write()
-            
+
         if screensaver_enabled and screensaver_timer == 120:
             scrn = oled.buffer
             oled.blit(framebuf.FrameBuffer(scrn,256,64,framebuf.GS4_HMSB), 0,0,-1, pal15_bright(0.25))
@@ -968,9 +997,58 @@ def core1():
 
 _thread.start_new_thread(core1, ())
 
-#core0 tasks: recieving interrupts
-sequence_tick = Timer(freq=256, mode=Timer.PERIODIC, callback=sequencer_update)
+#core0 tasks: recieving interrupts and handling LEDs in idle time
 matrix_sm.active(1)
 oscillator_sm.active(1)
-while True:
-    pass
+while True: #idling loop to wait for core1 to init
+    try:
+        if seq_int["rgb_brightness"] != -1:
+            break
+    except:
+        pass
+
+#start sequencer after load so it cant interrupt file operations
+sequence_tick = Timer(freq=256, mode=Timer.PERIODIC, callback=sequencer_update)
+
+while True: #neopixels!!
+    local_t = (seq_int["t"] / 32)%sequence["length"]
+    if(sequence["swing"]!=0):
+            if seq_int["t"] % 64 > 32 + sequence["swing"]: #if its the second beat
+                #get the pair then add on a fractional amount depending on how far through a beat you are
+                local_t = (math.floor(seq_int["t"] / 64)%(sequence["length"]/2)) * 2 + 1 + ((seq_int["t"] % 64 - (32+sequence["swing"])) / (32-sequence["swing"]))
+            else:
+                local_t = (math.floor(seq_int["t"] / 64)%(sequence["length"]/2)) * 2 + ((seq_int["t"] % 64) / (32+sequence["swing"]))
+    np.fill((0,0,0))
+    for i in range(16):
+        if(sequence["note"][15-i]):
+            #base color
+            rgb = [28+24*math.sin((sequence["note"][15-i]%12)/2), 0, 28+24*math.cos((sequence["note"][15-i]%12)/2)]
+
+            if(sequence["tremolo"][15-i]):
+                rgb[1] = sequence["tremolo"][15-i]*12
+            #brightness for accents
+            if(sequence["accent_v"][15-i]):
+                rgb = [rgb[0]*1.2,rgb[1]*1.2,rgb[2]*1.2]
+            if(sequence["accent_p"][15-i]):
+                rgb = [rgb[0]*1.1,rgb[1]*1.1,rgb[2]*1.1]
+            rgb = [rgb[0] * seq_int["rgb_brightness"], rgb[1] * seq_int["rgb_brightness"], rgb[2] * seq_int["rgb_brightness"]]
+            #palettes
+            if(seq_int["rgb_color_palette"] == 6):
+                average = (rgb[0]+rgb[1]+rgb[2])/3
+                rgb = [average,average,average]
+            elif(seq_int["rgb_color_palette"] < 3):
+                rgb = [rgb[(seq_int["rgb_color_palette"])%3],rgb[(seq_int["rgb_color_palette"]+1)%3],rgb[(seq_int["rgb_color_palette"]+2)%3]]
+            else:
+                rgb = [
+                    (rgb[(seq_int["rgb_color_palette"])%3] + rgb[(seq_int["rgb_color_palette"]+1)%3])/2,
+                    (rgb[(seq_int["rgb_color_palette"]+1)%3] + rgb[(seq_int["rgb_color_palette"]+2)%3])/2,
+                    (rgb[(seq_int["rgb_color_palette"]+2)%3] + rgb[(seq_int["rgb_color_palette"])%3])/2
+                ]                                      
+            #normalisation yayy
+            rgb = [clamp(math.floor(rgb[0]),0,240),clamp(math.floor(rgb[1]),0,240),clamp(math.floor(rgb[2]),0,240)]
+            np[i] = tuple(rgb)
+        
+        if(15-i == math.floor(local_t) and seq_int["rgb_brightness"] > 0):
+            chaser_brightness = clamp(math.floor(6*seq_int["rgb_brightness"]),1,15)
+            np[i] = (np[i][0] + chaser_brightness,np[i][1] + chaser_brightness,np[i][2] + chaser_brightness)
+    np.write()
