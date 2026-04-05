@@ -360,9 +360,11 @@ def core1():
     oled.rect(0,0,256,16,0,True)
     oled.text("save dir ok....",68,8,1)
     oled.show()
+    files = os.listdir("save")
     for i in range(16):
-        if ("save/"+str(i)+".json") not in files:
+        if (str(i)+".json") not in files:
             with open("save/"+str(i)+".json", "w") as file:
+                print("FILE: resetting slot #"+str(i)+".")
                 file.write("{}")
         oled.rect(0,0,256,16,0,True)
         oled.text("savefile"+str(i)+"ok..",68,8,1)
@@ -372,8 +374,9 @@ def core1():
     oled.text("savefiles ok...",68,8,1)
     oled.show()
     confstr = '{"rgb_brightness":1,"rgb_color_palette":0,"screensaver_enabled":false,"current_file_id":-1,"shuffle":false, "gate_length":0.5}'
-    if ("save/config.json") not in files:
+    if ("config.json") not in files:
         with open("save/config.json", "w") as file:
+            print("FILE: resetting config.")
             file.write(confstr)
     else:
         with open("save/config.json", "r") as file:
@@ -445,7 +448,8 @@ def core1():
         i+=1
         if(get_button_row(matrix_sm.get(),0)):
             i+=2
-        
+    
+    print(oled.buffer.hex())
     print("STATUS: system loaded!")
     seq_int["rgb_brightness"] = configfile["rgb_brightness"] #set this here to signal to core0 we are starting up
     seq_int["pause"] = False
@@ -1022,6 +1026,7 @@ def core1():
             oled.blit(framebuf.FrameBuffer(sprites["dog"]["blink"],16,12,framebuf.MONO_HLSB),-1,52,-1,pal1bpp(15))
             oled.text("z",13,48,15)
             oled.show()
+            print(oled.buffer.hex())
         if (not screensaver_enabled or screensaver_timer < 120):
             oled.show()
 
