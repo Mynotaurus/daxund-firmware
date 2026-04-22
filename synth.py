@@ -21,6 +21,8 @@ oled.show()
 
 import gc
 gc.threshold(180000)
+gc.collect()
+gc.enable()
 import neopixel
 import time
 import math
@@ -28,7 +30,7 @@ import rp2
 import _thread
 from rotary_irq_rp2 import RotaryIRQ
 from synth_graphics import sprites
-import json
+import ujson as json
 import os
 import random
 
@@ -181,14 +183,6 @@ seq_int = { #store all internal variables in a dict to namespace it, and also ma
     "rgb_brightness":-1
 }
 
-def randomise_sequence():
-    for i in range(15): #fisher yates shuffle yay
-        swap_index = random.randint(i,15)
-        temphold = sequence["note"][swap_index]
-        sequence["note"][swap_index] = sequence["note"][i]
-        sequence["note"][i] = temphold
-    update_sequencer_frequencies()
-
 def sequencer_update(tx):
     global seq_int, sequence, gate_pin, acc_volume_pin, acc_pitch_pin, adc_buf
     seq_substeps = 32
@@ -259,16 +253,33 @@ def sequencer_update(tx):
             seq_int["gate_time_left"] -= 1
         
     if((seq_int["t"]+1) % (seq_substeps*sequence["length"]) == 0 and seq_int["shuffle"]):
-        randomise_sequence()
+        for i in range(15): #fisher yates shuffle yay
+            swap_index = random.randint(i,15)
+            temphold = sequence["note"][swap_index]
+            sequence["note"][swap_index] = sequence["note"][i]
+            sequence["note"][i] = temphold
+        update_sequencer_frequencies()
     
     onboard_led.value(not gate_pin.value())
     seq_int["t"] += 1
+
 sequence_tick = Timer()
 
 def set_tempo():
     sequence_tick.deinit()
     sequence_tick.init(freq=sequence["tempo"]/15*32, mode=Timer.PERIODIC, callback=sequencer_update)
-    
+
+def pause_ticks():
+    pause_time = time.ticks_ms()
+    sequence_tick.deinit()
+    return pause_time
+
+def resume_ticks(pause_time):
+    tick_time = 1000/(sequence["tempo"]/15*32) #time in ms for one sequencer tick
+    ticks_missed = time.ticks_diff(time.ticks_ms(),pause_time) / tick_time
+    seq_int["t"] += int(ticks_missed)
+    sequence_tick.init(freq=sequence["tempo"]/15*32, mode=Timer.PERIODIC, callback=sequencer_update)
+
 pal1cache = {} #cache these when generated to save time later
 def pal1bpp(b):
     if b in pal1cache.keys():
@@ -311,13 +322,16 @@ def write_num(num,x,y,digits=0,padding=0,pal=15):
             
 def load_folder_to_str(filenum):
     temp = ""
+    pt = pause_ticks()
     with open("save/"+str(filenum)+".json","r") as file:
         temp = file.read()
         file.close()
+    resume_ticks(pt)
     return temp
 
 def load(filenum,slot):
     global sequence
+    pt = pause_ticks()
     with open("save/"+str(filenum)+".json","r") as file:
         loadobj = json.loads(file.read())
         if str(slot) not in loadobj.keys():
@@ -325,10 +339,11 @@ def load(filenum,slot):
         sequence = json.loads(json.dumps(loadobj[str(slot)]))
         file.close()
     update_sequencer_frequencies()
-    set_tempo()
+    resume_ticks(pt) #this sets the tempo for us
 
 def save(filenum,slot):
     saveobj = {}
+    pt = pause_ticks()
     with open("save/"+str(filenum)+".json","r") as file:
         saveobj = json.loads(file.read())
         file.close()
@@ -336,28 +351,28 @@ def save(filenum,slot):
     with open("save/"+str(filenum)+".json","w") as file:
         file.write(json.dumps(saveobj))
         file.close()
-        
-def save_config_entry(entry,val):
-    saveobj = 0
-    with open("save/config.json", "r") as file:
-        saveobj = json.loads(file.read())
-    if not saveobj:
-        print("ERROR: did not save config")
-        return #break if file op failed
-    saveobj[str(entry)] = val
-    with open("save/config.json", "w") as file:
-        file.write(json.dumps(saveobj))
-    print("FILE: saved "+entry+" as "+str(val))
+    resume_ticks(pt)
 
 #core1 tasks: display and input handling
 def core1():
+    configfile = {"rgb_brightness":1,"rgb_color_palette":0,"screensaver_enabled":False,"current_file_id":-1,"shuffle":False, "gate_length":0.5}
+
+    def save_config_entry(entry,val):
+        print("FILE: saving "+entry+" as "+str(val))
+        configfile[str(entry)] = val
+        pt = pause_ticks()
+        with open("save/config.json", "w") as file:
+            file.write(json.dumps(configfile))
+            file.close()
+        resume_ticks(pt)
+        print("FILE: saved "+entry+" as "+str(val))
+    
     def take_screenshot():
         if(gc.mem_free() < 20000):
             gc.collect()
         data = oled.buffer.hex()
         print(data)
         del data
-    
     
     print("STATUS: core1 booted!")
     #set up files
@@ -384,7 +399,7 @@ def core1():
     oled.rect(0,0,256,16,0,True)
     oled.text("savefiles ok...",68,8,1)
     oled.show()
-    confstr = '{"rgb_brightness":1,"rgb_color_palette":0,"screensaver_enabled":false,"current_file_id":-1,"shuffle":false, "gate_length":0.5}'
+    confstr = json.dumps(configfile)
     if ("config.json") not in files:
         with open("save/config.json", "w") as file:
             print("FILE: resetting config.")
@@ -1118,5 +1133,4 @@ def neopixel_refresh():
                 np[i] = (np[i][0] + chaser_brightness,np[i][1] + chaser_brightness,np[i][2] + chaser_brightness)
         np.write()
 
-gc.enable() #automatic garbage collection
 neopixel_refresh()
