@@ -33,6 +33,8 @@ from synth_graphics import sprites
 import ujson as json
 import os
 import random
+import usb.device
+from usb.device.midi import MIDIInterface
 
 print("STATUS: all libraries loaded!")
 def clamp(a,l,h):
@@ -100,6 +102,11 @@ def set_oscillator(frequency):
         divider = freq() / (256 * frequency)
         mem32[OSC_CLKDIV] = int(divider) * 65536 + int((divider - int(divider))*256) * 256
 
+def note_to_frequency(id):
+    #we'll use the midi id of the piano key from https://en.wikipedia.org/wiki/Piano_key_frequencies?useskin=vector
+    #A0 is 21 is 27.5Hz so 27.5/4 = 6.875 is at -3
+    return 6.875 * (2 ** int((id+3)/12)) * frequency_mult[(id+3)%12]
+
 # matrix driver
 # loop through columns
 # measure each row and push to ISR
@@ -138,15 +145,32 @@ def get_button_row(b,r):
         temp = temp + (get_bit(b, i*3+r) << i)
     return temp
 
+#midiii 
+
+class MIDI(MIDIInterface):
+    def on_open(self):
+        super().on_open()
+
+    def on_note_on(self, channel, pitch, vel):
+        if(channel==0):
+            set_oscillator(note_to_frequency(pitch))
+            gate_pin.low()
+
+    def on_note_off(self, channel, pitch, vel):
+        print(f"RX Note Off channel {channel} pitch {pitch} velocity {vel}")
+        if(channel==0):
+            gate_pin.high()
+
+    def on_control_change(self, channel, controller, value):
+        print(f"RX Control channel {channel} controller {controller} value {value}")
+
+midi = MIDI()
+midi_channel = 0
+
 #notes are logarithmically spaced across octaves - 2^(1/12) apart
 frequency_letters = ["c ","c#","d ","d#","e ","f ","f#","g ","g#","a ","a#","b "]
 #lets pre-calculate those frequencies actually
 frequency_mult = [1.00000,1.05946,1.12246,1.18921,1.25992,1.33484,1.41421,1.49830,1.58740,1.68179,1.78180,1.88775]
-
-def note_to_frequency(id):
-    #we'll use the midi id of the piano key from https://en.wikipedia.org/wiki/Piano_key_frequencies?useskin=vector
-    #A0 is 21 is 27.5Hz so 27.5/4 = 6.875 is at -3
-    return 6.875 * (2 ** int((id+3)/12)) * frequency_mult[(id+3)%12]
 
 def update_sequencer_frequencies(): #copy our note id list into the frequency list
     for i in range(len(sequence["note"])):
@@ -180,22 +204,34 @@ seq_int = { #store all internal variables in a dict to namespace it, and also ma
     "gate_length":0.5,
     "shuffle":False,
     "pause":True,
-    "rgb_brightness":-1
+    "off":False,
+    "rgb_brightness":-1,
+    "midi":False
 }
 
 def sequencer_update(tx):
     global seq_int, sequence, gate_pin, acc_volume_pin, acc_pitch_pin, adc_buf
+
+    if(seq_int["off"]):
+        return
+
     seq_substeps = 32
+    midi_note = 4
+
+    
+    current_beat = int((seq_int["t"])/seq_substeps)%sequence["length"]
+    if(seq_int["t"] % (seq_substeps*2) == seq_substeps + sequence["swing"]):
+        current_beat = int((seq_int["t"] - sequence["swing"])/seq_substeps)%sequence["length"]
+    
     #we want to run this multiple times per beat
     if(seq_int["t"] % (seq_substeps*2) == 0) or (seq_int["t"] % (seq_substeps*2) == seq_substeps + sequence["swing"]):
         if(seq_int["pause"]):
             gate_pin.high()
+            midi.note_off(midi_channel, midi_note)
             acc_volume_pin.low()
             acc_pitch_pin.low()
+            seq_int["off"] = True
             return
-        current_beat = int((seq_int["t"])/seq_substeps)%sequence["length"]
-        if(seq_int["t"] % (seq_substeps*2) == seq_substeps + sequence["swing"]):
-            current_beat = int((seq_int["t"] - sequence["swing"])/seq_substeps)%sequence["length"]
         if(sequence["frequency"][current_beat]): #if theres a note rn
             if(sequence["accent_v"][current_beat]):
                 acc_volume_pin.high()
@@ -213,7 +249,6 @@ def sequencer_update(tx):
                 seq_int["gate_time_left"] = min(int(seq_int["gate_length"]*seq_substeps),(seq_substeps-sequence["swing"]-1))
             else:
                 seq_int["gate_time_left"] = min(int(seq_int["gate_length"]*seq_substeps),(seq_substeps+sequence["swing"]-1))
-            gate_pin.low()
             
             seq_int["current_tremolo"] = sequence["tremolo"][current_beat]
             if(seq_int["current_tremolo"]):
@@ -225,7 +260,13 @@ def sequencer_update(tx):
                 seq_int["note_gap"] = (seq_int["next_note"]-seq_int["current_note"])
             else:
                 seq_int["note_hold"] = False
-                
+
+            if(not seq_int["current_tremolo"]):
+                gate_pin.low()
+                if(sequence["accent_v"][current_beat]):
+                    midi.note_on(midi_channel,sequence["note"][current_beat], 127) 
+                else:    
+                    midi.note_on(midi_channel,sequence["note"][current_beat], 64)    
         else:
             acc_volume_pin.low() #clear volume if theres no note next
 
@@ -243,14 +284,24 @@ def sequencer_update(tx):
         if(seq_int["gate_time_left"]>0):
             if seq_int["gate_time_left"] % (24 // (2+seq_int["current_tremolo"]*2)) == 0:
                 gate_pin.toggle()
+                if(gate_pin.value()):
+                    midi.note_off(midi_channel,sequence["note"][current_beat])
+                else:
+                    midi.note_on(midi_channel,sequence["note"][current_beat])
             seq_int["gate_time_left"] -= 1
-        else:
+        elif(seq_int["gate_time_left"]==0):
             gate_pin.high()
+            midi.note_off(midi_channel,sequence["note"][current_beat]) 
+            seq_int["gate_time_left"] = -1
     elif not(seq_int["note_hold"]): #standard gate timing
         if(seq_int["gate_time_left"]<=0):
             gate_pin.high()
+            seq_int["gate_time_left"] = -1
         else:
             seq_int["gate_time_left"] -= 1
+
+    if(seq_int["gate_time_left"] == 0):
+        midi.note_off(midi_channel,sequence["note"][current_beat])    
         
     if((seq_int["t"]+1) % (seq_substeps*sequence["length"]) == 0 and seq_int["shuffle"]):
         for i in range(15): #fisher yates shuffle yay
@@ -355,7 +406,7 @@ def save(filenum,slot):
 
 #core1 tasks: display and input handling
 def core1():
-    configfile = {"rgb_brightness":1,"rgb_color_palette":0,"screensaver_enabled":False,"current_file_id":-1,"shuffle":False, "gate_length":0.5}
+    configfile = {"rgb_brightness":1,"rgb_color_palette":0,"screensaver_enabled":False,"current_file_id":-1,"shuffle":False, "gate_length":0.5, "midi":False}
 
     def save_config_entry(entry,val):
         print("FILE: saving "+entry+" as "+str(val))
@@ -441,6 +492,8 @@ def core1():
     screensaver_timer = 0
     seq_int["shuffle"] = configfile["shuffle"]
     seq_int["gate_length"] = configfile["gate_length"]
+    seq_int["midi"] = configfile["midi"]
+    midi_reboot = False
     
     popup_last_used = -99999
     popup_shown = "none"
@@ -477,6 +530,7 @@ def core1():
     print("STATUS: system loaded!")
     seq_int["rgb_brightness"] = configfile["rgb_brightness"] #set this here to signal to core0 we are starting up
     seq_int["pause"] = False
+    seq_int["off"] = False
     oled.fill(0)
     while True:
         #outline: fetch inputs, update state, refresh display
@@ -523,6 +577,8 @@ def core1():
 
         if(new_mod_buttons & 0b00100000): #play/pause
             seq_int["pause"] = not seq_int["pause"]
+            if(not seq_int["pause"]):
+                seq_int["off"] = False
         if(new_mod_buttons & 0b00010000): #menu
             if(file_picker_page>0):
                 file_picker_page = 0
@@ -581,6 +637,10 @@ def core1():
                 screensaver_enabled = not screensaver_enabled
                 save_config_entry("screensaver_enabled", screensaver_enabled)
                 screensaver_timer = 0
+            elif(new_note_buttons & 0b00100000_00000000): #midi
+                seq_int["midi"] = not seq_int["midi"]
+                save_config_entry("midi", seq_int["midi"])
+                midi_reboot = True
             
             if(current_note_buttons & 0b00001000_00000000)  and current_file_id != -1:
                 menu_save_timer += 1
@@ -899,6 +959,17 @@ def core1():
                 oled.text("ON!",68,52,15)
             else:
                 oled.text("off",68,52,2)
+
+            #midi
+            oled.text("MIDI",64,0,15)
+            if(seq_int["midi"]):
+                oled.text("ON!",68,8,15)
+            else:
+                oled.text("off",68,8,2)
+
+            if midi_reboot:
+                oled.text("next",64,16,2)
+                oled.text("boot",64,24,2)
             
             #shuffle
             if(menu_shuffle_timer >= menu_safety_hold_threshold):
@@ -1071,6 +1142,7 @@ def core1():
 _thread.stack_size(0)
 _thread.start_new_thread(core1, ())
 
+
 #core0 tasks: recieving interrupts and handling LEDs in idle time
 matrix_sm.active(1)
 oscillator_sm.active(1)
@@ -1080,6 +1152,9 @@ while True: #idling loop to wait for core1 to init
             break
     except:
         pass
+
+if(seq_int["midi"]):
+    usb.device.get().init(midi) #, builtin_driver=True)
 
 #start sequencer after load so it cant interrupt file operations
 sequence_tick = Timer(freq=256, mode=Timer.PERIODIC, callback=sequencer_update)
