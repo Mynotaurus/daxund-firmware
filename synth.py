@@ -157,15 +157,12 @@ class MIDI(MIDIInterface):
             gate_pin.low()
 
     def on_note_off(self, channel, pitch, vel):
-        print(f"RX Note Off channel {channel} pitch {pitch} velocity {vel}")
         if(channel==0):
             gate_pin.high()
 
-    def on_control_change(self, channel, controller, value):
-        print(f"RX Control channel {channel} controller {controller} value {value}")
 
 midi = MIDI()
-midi_channel = 0
+midi_channel = 1
 
 #notes are logarithmically spaced across octaves - 2^(1/12) apart
 frequency_letters = ["c ","c#","d ","d#","e ","f ","f#","g ","g#","a ","a#","b "]
@@ -210,13 +207,12 @@ seq_int = { #store all internal variables in a dict to namespace it, and also ma
 }
 
 def sequencer_update(tx):
-    global seq_int, sequence, gate_pin, acc_volume_pin, acc_pitch_pin, adc_buf
+    global seq_int, sequence, gate_pin, acc_volume_pin, acc_pitch_pin, adc_buf, midi_channel
 
     if(seq_int["off"]):
         return
 
     seq_substeps = 32
-    midi_note = 4
 
     
     current_beat = int((seq_int["t"])/seq_substeps)%sequence["length"]
@@ -227,7 +223,7 @@ def sequencer_update(tx):
     if(seq_int["t"] % (seq_substeps*2) == 0) or (seq_int["t"] % (seq_substeps*2) == seq_substeps + sequence["swing"]):
         if(seq_int["pause"]):
             gate_pin.high()
-            midi.note_off(midi_channel, midi_note)
+            midi.note_off(midi_channel, sequence["note"][current_beat])
             acc_volume_pin.low()
             acc_pitch_pin.low()
             seq_int["off"] = True
