@@ -162,7 +162,7 @@ class MIDI(MIDIInterface):
 
 
 midi = MIDI()
-midi_channel = 1
+midi_channel = 0
 
 #notes are logarithmically spaced across octaves - 2^(1/12) apart
 frequency_letters = ["c ","c#","d ","d#","e ","f ","f#","g ","g#","a ","a#","b "]
