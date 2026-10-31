@@ -1150,7 +1150,7 @@ while True: #idling loop to wait for core1 to init
         pass
 
 if(seq_int["midi"]):
-    usb.device.get().init(midi, product_str="Daxund) #, builtin_driver=True)
+    usb.device.get().init(midi, product_str="Daxund") #, builtin_driver=True)
 
 #start sequencer after load so it cant interrupt file operations
 sequence_tick = Timer(freq=256, mode=Timer.PERIODIC, callback=sequencer_update)
