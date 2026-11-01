@@ -1,4 +1,4 @@
-# Daxund Software
+# Daxund Firmware
 
 code for [daxund](https://zatzhing.me/blog/daxund)
 
